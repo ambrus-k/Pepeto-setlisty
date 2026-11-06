@@ -1,0 +1,6 @@
+{
+  "name": "MobileSheets Setlist Studio",
+  "description": "Profesionální správce a generátor hudebních setlistů pro kapelu s exportem do barevného PDF a MobileSheets XML (.mss) a synchronizací s Google Drive.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
