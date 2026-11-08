@@ -8,6 +8,14 @@
  */
 
 import JSZip from 'jszip';
+import { DOMParser as XmlDomParser } from '@xmldom/xmldom';
+
+function getDOMParser(): any {
+  if (typeof window !== 'undefined' && typeof window.DOMParser !== 'undefined') {
+    return new window.DOMParser();
+  }
+  return new XmlDomParser();
+}
 
 export interface CellStyleInfo {
   bgColor?: string; // Hex color: e.g. "#ffd966", "#b6d7a8", "#cfe2f3", "#f4cccc"
@@ -169,7 +177,7 @@ export async function parseExcelAllStyles(
   sheetByIndex: Map<number, SheetStylesResult>;
 }> {
   const zip = await JSZip.loadAsync(buffer);
-  const parser = new DOMParser();
+  const parser = getDOMParser();
 
   // 1. Parse theme palette from xl/theme/theme1.xml (if present)
   const themePalette: Record<number, string> = { ...DEFAULT_THEME_COLORS };

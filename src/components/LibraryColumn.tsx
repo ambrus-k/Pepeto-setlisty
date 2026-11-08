@@ -7,7 +7,7 @@ interface LibraryColumnProps {
   activeSet: SetlistGroup;
   allSets: SetlistGroup[];
   onAddSongToActiveSet: (song: Song) => void;
-  onOpenDataSources: () => void;
+  onSyncDatabase?: () => void;
 }
 
 /**
@@ -46,7 +46,7 @@ export const LibraryColumn: React.FC<LibraryColumnProps> = ({
   activeSet,
   allSets,
   onAddSongToActiveSet,
-  onOpenDataSources,
+  onSyncDatabase,
 }) => {
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
@@ -186,22 +186,24 @@ export const LibraryColumn: React.FC<LibraryColumnProps> = ({
         )}
       </div>
 
-      {/* Song List */}
-      <div className="flex-1 overflow-y-auto p-3 sm:p-4 space-y-2">
+      {/* Song List - High Density with Hairline Dividers */}
+      <div className="flex-1 overflow-y-auto divide-y divide-slate-800/80 bg-slate-900/50">
         {songs.length === 0 ? (
-          <div className="flex flex-col items-center justify-center h-72 text-center p-6 border-2 border-dashed border-slate-800 rounded-2xl text-slate-400">
+          <div className="flex flex-col items-center justify-center h-72 text-center p-6 text-slate-400">
             <HardDrive className="w-10 h-10 text-indigo-400 mb-3" />
             <p className="text-base font-bold text-white">Knihovna je zatím prázdná</p>
             <p className="text-xs text-slate-400 max-w-sm mt-1 mb-4">
-              Propojte Google Disk a vyberte zdrojovou složku kapely, ze které se automaticky načtou soubory .mss a .xlsx s barvami.
+              Načtěte repertoár kapely z centrální Google Drive databáze (soubory PEPETO_KOMPLET_SETLIST.mss a PEPETA_KOMPLET.xlsx).
             </p>
-            <button
-              onClick={onOpenDataSources}
-              className="flex items-center gap-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs px-4 py-2.5 shadow-md transition active:scale-95"
-            >
-              <HardDrive className="w-4 h-4" />
-              <span>Otevřít propojení s Google Diskem</span>
-            </button>
+            {onSyncDatabase && (
+              <button
+                onClick={onSyncDatabase}
+                className="flex items-center gap-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs px-4 py-2 shadow-md transition active:scale-95"
+              >
+                <HardDrive className="w-4 h-4" />
+                <span>Načíst databázi z Google Disku</span>
+              </button>
+            )}
           </div>
         ) : filteredSongs.length === 0 ? (
           <div className="text-center py-12 text-slate-500 text-sm">
@@ -216,54 +218,60 @@ export const LibraryColumn: React.FC<LibraryColumnProps> = ({
               <div
                 key={song.id}
                 onClick={() => onAddSongToActiveSet(song)}
-                className="group relative flex items-center justify-between gap-3 rounded-xl p-2 cursor-pointer border border-transparent hover:border-indigo-500/80 hover:shadow-lg hover:shadow-indigo-500/10 transition-all active:scale-[0.99] bg-slate-800/60 hover:bg-slate-800"
+                className={`group flex items-center justify-between gap-2 px-2.5 sm:px-3 py-1 cursor-pointer transition select-none hover:bg-slate-800/80 active:bg-slate-800 ${
+                  inActiveSet ? 'bg-indigo-950/20' : ''
+                }`}
+                title="Kliknutím přidat do aktivního setu"
               >
-                {/* Main Song Badge with accurate HEX textColor & bgColor from Excel */}
+                {/* Main Song Pill with authentic HEX textColor & bgColor from Excel */}
                 <div
-                  className="flex-1 min-w-0 rounded-lg px-3 py-2 shadow-sm border border-black/20 transition group-hover:brightness-105"
+                  className="flex-1 min-w-0 rounded px-2.5 py-1 shadow-xs border border-black/15 flex items-center justify-between gap-2 transition group-hover:brightness-105"
                   style={{
                     backgroundColor: song.bgColor || '#ffffff',
                     color: song.textColor || '#000000',
                   }}
                 >
-                  <div className="font-bold text-sm truncate tracking-tight">
-                    {renderHighlightedTitle(song.pdf_title, song.textColor || '#000000')}
+                  <div className="flex items-center gap-2 min-w-0">
+                    <span className="font-mono font-bold text-xs shrink-0 opacity-75">
+                      #{song.id}
+                    </span>
+                    <span className="font-bold text-xs sm:text-sm truncate tracking-tight">
+                      {renderHighlightedTitle(song.pdf_title, song.textColor || '#000000')}
+                    </span>
                   </div>
-                  <div
-                    className="flex items-center gap-2 text-[11px] font-medium truncate mt-0.5 opacity-85"
-                    style={{ color: song.textColor || '#000000' }}
-                  >
-                    <span className="font-mono font-bold">ID: {song.id}</span>
-                    <span>•</span>
-                    <span className="truncate">XML: {song.mss_title}</span>
-                    {song.category && (
-                      <>
-                        <span>•</span>
-                        <span className="font-semibold">{song.category}</span>
-                      </>
-                    )}
-                  </div>
+
+                  {song.category && (
+                    <span
+                      className="text-[10px] uppercase font-bold tracking-wider px-1.5 py-0.5 rounded shrink-0 hidden md:inline"
+                      style={{
+                        backgroundColor: 'rgba(0,0,0,0.1)',
+                        color: song.textColor || '#000000',
+                      }}
+                    >
+                      {song.category}
+                    </span>
+                  )}
                 </div>
 
-                {/* Status Badge & Add button */}
-                <div className="flex items-center gap-2 shrink-0">
+                {/* Status Badge & Quick Add button */}
+                <div className="flex items-center gap-1.5 shrink-0">
                   {inActiveSet ? (
-                    <span className="flex items-center gap-1 rounded-lg bg-indigo-950/90 border border-indigo-700/80 text-indigo-300 text-[11px] font-bold px-2 py-1">
+                    <span className="flex items-center gap-1 rounded bg-indigo-950/90 border border-indigo-700/80 text-indigo-300 text-[10px] font-bold px-1.5 py-0.5">
                       <Check className="w-3 h-3 text-indigo-400" />
-                      <span className="hidden sm:inline">V tomto setu</span>
+                      <span className="hidden sm:inline">V setu</span>
                     </span>
                   ) : assignedInSetName ? (
-                    <span className="rounded-lg bg-slate-800 border border-slate-700 text-slate-400 text-[11px] font-medium px-2 py-1">
-                      V: {assignedInSetName}
+                    <span className="rounded bg-slate-800/90 border border-slate-700 text-slate-400 text-[10px] font-medium px-1.5 py-0.5">
+                      {assignedInSetName}
                     </span>
                   ) : null}
 
-                  {/* Quick Add Button */}
+                  {/* Compact Quick Add Button */}
                   <button
-                    className="w-8 h-8 rounded-lg bg-indigo-600/80 group-hover:bg-indigo-600 text-white flex items-center justify-center transition group-hover:scale-110 shadow-sm"
+                    className="w-6 h-6 rounded bg-indigo-600/70 group-hover:bg-indigo-600 text-white flex items-center justify-center transition shadow-xs group-hover:scale-105"
                     title={`Přidat do ${activeSet.name}`}
                   >
-                    <Plus className="w-4 h-4" />
+                    <Plus className="w-3.5 h-3.5" />
                   </button>
                 </div>
               </div>

@@ -1,28 +1,16 @@
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
-import { User } from 'firebase/auth';
-import { Song, SetlistGroup, EventProject, DriveSettings } from './types';
+import React, { useState, useEffect, useMemo } from 'react';
+import { Song, SetlistGroup, EventProject } from './types';
 import { storage } from './services/storage';
-import { parseMssXml, parseXlsx, pairMssAndXlsx } from './services/parser';
 import { generateMssXml, generatePdf, downloadFile } from './services/exportGenerator';
-import { initAuth, googleSignIn, logout, getAccessToken } from './services/firebaseAuth';
-import {
-  getDriveFoldersStatus,
-  findOrCreateFolder,
-  getFolderById,
-  uploadFileToFolder,
-  downloadDriveFile,
-  DEFAULT_FOLDER_DATA,
-  DEFAULT_FOLDER_EXPORT,
-  DEFAULT_FILE_MSS,
-  DEFAULT_FILE_XLSX,
-} from './services/googleDrive';
 import { useOnlineStatus } from './hooks/useOnlineStatus';
+import { useAuth } from './context/AuthContext';
+import { LoginScreen } from './components/LoginScreen';
 import { Header } from './components/Header';
 import { SetTabs } from './components/SetTabs';
 import { ActiveSetColumn } from './components/ActiveSetColumn';
 import { LibraryColumn } from './components/LibraryColumn';
-import { DriveSettingsModal } from './components/DriveSettingsModal';
 import { ExportModal } from './components/ExportModal';
+import { AdminPanelModal } from './components/AdminPanelModal';
 import { OfflineIndicator } from './components/OfflineIndicator';
 
 const DEFAULT_SETS: SetlistGroup[] = [
@@ -32,31 +20,22 @@ const DEFAULT_SETS: SetlistGroup[] = [
   { id: 'set-zbytek', name: 'Zbytek', isFixed: true, songIds: [], color: '#cbd5e1' },
 ];
 
-export default function App() {
+function SetlistStudio() {
   const isOnline = useOnlineStatus();
+  const { role, logout } = useAuth();
 
-  // App State - empty event and sets, strictly drawing from Google Drive
+  // App State - event name and setlist groups
   const [eventName, setEventName] = useState<string>('');
   const [sets, setSets] = useState<SetlistGroup[]>(DEFAULT_SETS);
   const [activeSetId, setActiveSetId] = useState<string>('set-1');
   const [songs, setSongs] = useState<Song[]>([]);
 
-  // User & Drive state
-  const [user, setUser] = useState<User | null>(null);
-  const [driveToken, setDriveToken] = useState<string | null>(null);
-  const [driveStatus, setDriveStatus] = useState<any>(null);
-  const [isLoadingDrive, setIsLoadingDrive] = useState<boolean>(false);
-
-  // Configurable Drive Settings
-  const [driveSettings, setDriveSettings] = useState<DriveSettings>({
-    dataFolderName: DEFAULT_FOLDER_DATA,
-    exportFolderName: DEFAULT_FOLDER_EXPORT,
-    mssFileName: DEFAULT_FILE_MSS,
-    xlsxFileName: DEFAULT_FILE_XLSX,
-  });
+  // Sync state
+  const [isSyncing, setIsSyncing] = useState<boolean>(false);
+  const [syncMessage, setSyncMessage] = useState<string | null>(null);
 
   // Modals state
-  const [isDriveSettingsOpen, setIsDriveSettingsOpen] = useState<boolean>(false);
+  const [isAdminPanelOpen, setIsAdminPanelOpen] = useState<boolean>(false);
   const [isExportOpen, setIsExportOpen] = useState<boolean>(false);
   const [isExporting, setIsExporting] = useState<boolean>(false);
 
@@ -83,25 +62,26 @@ export default function App() {
     return sets.find((s) => s.id === activeSetId) || sets[0] || DEFAULT_SETS[0];
   }, [sets, activeSetId]);
 
+  // Total songs in active sets
+  const totalSetSongs = useMemo(() => {
+    return sets.reduce((sum, s) => sum + s.songIds.length, 0);
+  }, [sets]);
+
   // 1. Initial Load from IndexedDB
   useEffect(() => {
     const loadSavedData = async () => {
       try {
-        const savedSettings = await storage.getDriveSettings();
-        if (savedSettings) {
-          setDriveSettings(savedSettings);
-        }
-
         const savedSongs = await storage.getSongs();
         if (savedSongs && savedSongs.length > 0) {
           setSongs(savedSongs);
         } else {
-          setSongs([]);
+          // If IndexedDB is empty, trigger initial fetch from backend API
+          handleSyncDatabase(false);
         }
 
         const savedProject = await storage.getCurrentProject();
         if (savedProject) {
-          if (savedProject.eventName && savedProject.eventName !== 'Oleško 22.08.2026') {
+          if (savedProject.eventName) {
             setEventName(savedProject.eventName);
           }
           if (savedProject.sets && savedProject.sets.length > 0) {
@@ -116,45 +96,7 @@ export default function App() {
     loadSavedData();
   }, []);
 
-  // 2. Auth state initialization
-  useEffect(() => {
-    const unsubscribe = initAuth(
-      (currentUser, token) => {
-        setUser(currentUser);
-        setDriveToken(token);
-      },
-      () => {
-        setUser(null);
-        setDriveToken(null);
-      }
-    );
-    return () => unsubscribe();
-  }, []);
-
-  // 3. Check Google Drive folders when token or settings change
-  const checkDriveStatus = useCallback(
-    async (token: string, currentSettings?: DriveSettings) => {
-      setIsLoadingDrive(true);
-      try {
-        const settingsToUse = currentSettings || driveSettings;
-        const status = await getDriveFoldersStatus(token, settingsToUse);
-        setDriveStatus(status);
-      } catch (err) {
-        console.error('Error checking Drive status:', err);
-      } finally {
-        setIsLoadingDrive(false);
-      }
-    },
-    [driveSettings]
-  );
-
-  useEffect(() => {
-    if (driveToken) {
-      checkDriveStatus(driveToken, driveSettings);
-    }
-  }, [driveToken, driveSettings, checkDriveStatus]);
-
-  // 4. Auto-save current project to IndexedDB
+  // 2. Auto-save current project to IndexedDB
   useEffect(() => {
     const project: EventProject = {
       id: 'current-session',
@@ -165,37 +107,85 @@ export default function App() {
     storage.saveCurrentProject(project).catch(console.error);
   }, [eventName, sets]);
 
-  // Handle Google Auth
-  const handleSignIn = async () => {
+  // 3. Sync Database from Backend API (/api/drive/sync)
+  const handleSyncDatabase = async (force = false) => {
+    setIsSyncing(true);
+    setSyncMessage(null);
     try {
-      const result = await googleSignIn();
-      if (result) {
-        setUser(result.user);
-        setDriveToken(result.accessToken);
-        await checkDriveStatus(result.accessToken, driveSettings);
+      const url = force ? '/api/drive/sync?force=true' : '/api/drive/sync';
+      const res = await fetch(url);
+      if (!res.ok) {
+        const errorData = await res.json().catch(() => ({}));
+        throw new Error(errorData.error || `Chyba serveru (${res.status})`);
       }
-    } catch (err) {
-      console.error('Sign in failed:', err);
+
+      const data = await res.json();
+      if (data.songs && Array.isArray(data.songs) && data.songs.length > 0) {
+        setSongs(data.songs);
+        await storage.saveSongs(data.songs);
+        const sourceNote = data.source === 'google-drive' ? 'z Google Disku' : 'z centrální databáze';
+        setSyncMessage(`Úspěšně načteno ${data.songs.length} skladeb ${sourceNote}!`);
+        setTimeout(() => setSyncMessage(null), 4000);
+      }
+    } catch (err: any) {
+      console.error('Sync failed:', err);
+      // If we already have songs, don't wipe them
+      const localSongs = await storage.getSongs();
+      if (localSongs && localSongs.length > 0) {
+        setSongs(localSongs);
+      }
+      setSyncMessage(`Chyba při synchronizaci: ${err.message}`);
+      setTimeout(() => setSyncMessage(null), 5000);
+    } finally {
+      setIsSyncing(false);
     }
   };
 
-  const handleSignOut = async () => {
-    await logout();
-    setUser(null);
-    setDriveToken(null);
-    setDriveStatus(null);
-  };
+  // 4. Process offline export queue automatically when back online
+  useEffect(() => {
+    if (!isOnline) return;
 
-  // Save new drive settings
-  const handleSaveDriveSettings = async (newSettings: DriveSettings) => {
-    setDriveSettings(newSettings);
-    await storage.saveDriveSettings(newSettings);
-    if (driveToken) {
-      await checkDriveStatus(driveToken, newSettings);
-    }
-  };
+    const processQueue = async () => {
+      try {
+        const pending = await storage.getPendingUploads();
+        if (!pending || pending.length === 0) return;
 
+        let syncedCount = 0;
+        for (const item of pending) {
+          try {
+            let mssXml = '';
+            if (item.fileType === 'mss') {
+              mssXml = await item.blobData.text();
+            }
+            const res = await fetch('/api/drive/export', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                fileName: item.fileName,
+                mssXml: mssXml || undefined,
+                eventName: item.eventName,
+              }),
+            });
+            if (res.ok) {
+              await storage.removePendingUpload(item.id);
+              syncedCount++;
+            }
+          } catch (itemErr) {
+            console.warn('Could not sync offline item:', itemErr);
+          }
+        }
 
+        if (syncedCount > 0) {
+          setSyncMessage(`Připojení obnoveno: ${syncedCount} offline export(y) byly automaticky uloženy na Google Disk!`);
+          setTimeout(() => setSyncMessage(null), 5000);
+        }
+      } catch (qErr) {
+        console.warn('Queue processing error:', qErr);
+      }
+    };
+
+    processQueue();
+  }, [isOnline]);
 
   // Set Operations
   const handleAddSet = () => {
@@ -207,7 +197,6 @@ export default function App() {
       songIds: [],
     };
 
-    // Insert before fixed sets
     const fixedSets = sets.filter((s) => s.isFixed);
     const updated = [...dynamicSets, newSet, ...fixedSets];
     setSets(updated);
@@ -314,14 +303,12 @@ export default function App() {
   };
 
   const handleClearSet = () => {
-    if (window.confirm(`Opravdu chcete vyprázdnit ${activeSet.name}?`)) {
-      setSets((prevSets) =>
-        prevSets.map((s) => (s.id === activeSet.id ? { ...s, songIds: [] } : s))
-      );
-    }
+    setSets((prevSets) =>
+      prevSets.map((s) => (s.id === activeSet.id ? { ...s, songIds: [] } : s))
+    );
   };
 
-  // Generator & Drive Export Execution
+  // Generator & Silent Backend Drive Export Execution
   const handleGenerateAndSave = async () => {
     setIsExporting(true);
     setDriveExportStatus({ state: 'uploading' });
@@ -341,59 +328,39 @@ export default function App() {
       const pdfFileName = `${safeName}.pdf`;
       const mssFileName = `${safeName}.mss`;
 
-      // 3. Upload to Google Drive
-      let token = driveToken;
-      if (!token) {
-        token = await getAccessToken();
-      }
+      // 3. Silent Backend Google Drive Upload via /api/drive/export
+      if (isOnline) {
+        // Convert pdfBlob to base64
+        const reader = new FileReader();
+        const base64Promise = new Promise<string>((resolve) => {
+          reader.onloadend = () => resolve(reader.result as string);
+          reader.readAsDataURL(pdfBlob);
+        });
+        const pdfBase64 = await base64Promise;
 
-      if (isOnline && token) {
-        // Resolve target export folder (by ID if configured or by name)
-        let exportFolderId = driveSettings.exportFolderId;
-        if (exportFolderId) {
-          const verified = await getFolderById(exportFolderId, token);
-          if (!verified) exportFolderId = undefined;
+        const res = await fetch('/api/drive/export', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            fileName: mssFileName,
+            mssXml,
+            pdfBase64,
+            eventName: safeName,
+          }),
+        });
+
+        if (res.ok) {
+          const data = await res.json();
+          setDriveExportStatus({
+            state: 'success',
+            message: data.message || `Setlist "${mssFileName}" byl tiše uložen do exportní složky na Google Disku!`,
+          });
+        } else {
+          const errorData = await res.json().catch(() => ({}));
+          throw new Error(errorData.error || 'Server vrátil chybu při exportu.');
         }
-
-        let targetFolderId = exportFolderId;
-        if (!targetFolderId) {
-          const folder = await findOrCreateFolder(driveSettings.exportFolderName, token);
-          targetFolderId = folder.id;
-        }
-
-        // Upload PDF
-        await uploadFileToFolder(
-          targetFolderId,
-          pdfFileName,
-          'application/pdf',
-          pdfBlob,
-          token,
-          async (fileName) => {
-            return window.confirm(
-              `Soubor "${fileName}" již ve složce "${driveSettings.exportFolderName}" existuje. Přejete si jej přepsat?`
-            );
-          }
-        );
-
-        // Upload MSS
-        await uploadFileToFolder(
-          targetFolderId,
-          mssFileName,
-          'text/xml',
-          mssXml,
-          token,
-          async (fileName) => {
-            return window.confirm(
-              `Soubor "${fileName}" již ve složce "${driveSettings.exportFolderName}" existuje. Přejete si jej přepsat?`
-            );
-          }
-        );
-
-        setDriveExportStatus({ state: 'success' });
-        // Refresh folder status to reflect new files
-        await checkDriveStatus(token, driveSettings);
       } else {
-        // Offline queue
+        // Offline queue in IndexedDB
         await storage.addPendingUpload({
           id: `upload-${Date.now()}-pdf`,
           eventName,
@@ -420,14 +387,14 @@ export default function App() {
       console.error('Export failed:', err);
       setDriveExportStatus({
         state: 'error',
-        message: err.message || 'Chyba při exportu',
+        message: err.message || 'Chyba při ukládání na Google Disk.',
       });
     } finally {
       setIsExporting(false);
     }
   };
 
-  // Quick direct downloads
+  // Quick downloads
   const handleQuickDownloadPdf = async () => {
     const { blob } = await generatePdf(eventName, sets, songsMap);
     const safeName = eventName.trim() || 'Setlist';
@@ -440,63 +407,32 @@ export default function App() {
     downloadFile(xml, `${safeName}.mss`, 'text/xml');
   };
 
-  // Drive sync handler: loads MSS and XLSX from the configured data folder
-  const handleSyncFromDrive = async () => {
-    if (!driveToken || !driveStatus?.dataFolder) return;
-    setIsLoadingDrive(true);
-    try {
-      const { mssFile, xlsxFile } = driveStatus;
-      if (!mssFile || !xlsxFile) {
-        alert(
-          `Ve složce "${driveStatus.dataFolderName}" chybí soubor MSS nebo XLSX.\n` +
-            `Hledané soubory: ${driveSettings.mssFileName} a ${driveSettings.xlsxFileName}`
-        );
-        return;
-      }
-
-      // Download both files
-      const mssBuffer = await downloadDriveFile(mssFile.id, driveToken);
-      const xlsxBuffer = await downloadDriveFile(xlsxFile.id, driveToken);
-
-      const mssText = new TextDecoder('utf-8').decode(mssBuffer);
-      const parsedMss = parseMssXml(mssText);
-      const parsedXlsx = await parseXlsx(xlsxBuffer);
-
-      const paired = pairMssAndXlsx(parsedMss, parsedXlsx);
-      setSongs(paired);
-      await storage.saveSongs(paired);
-      alert(`Úspěšně načteno a spárováno ${paired.length} skladeb ze složky "${driveStatus.dataFolderName}" na Google Disku!`);
-    } catch (err: any) {
-      console.error('Sync error:', err);
-      alert(`Chyba při synchronizaci: ${err.message}`);
-    } finally {
-      setIsLoadingDrive(false);
-    }
-  };
-
-  const totalSetSongs = useMemo(() => {
-    return sets.reduce((sum, s) => sum + s.songIds.length, 0);
-  }, [sets]);
-
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-sans selection:bg-indigo-500/30 selection:text-indigo-200">
-      {/* 1. Header with Event Name, Drive auth, and Export buttons */}
+      {/* 1. Header with Event Name, Role badge, and Export buttons */}
       <Header
         eventName={eventName}
         onEventNameChange={setEventName}
-        user={user}
-        onSignIn={handleSignIn}
-        onSignOut={handleSignOut}
+        role={role || 'user'}
+        onLogout={logout}
         isOnline={isOnline}
-        driveReady={!!driveStatus?.exportFolder}
         totalMasterSongs={songs.length}
         totalSetSongs={totalSetSongs}
-        onOpenDataSources={() => setIsDriveSettingsOpen(true)}
+        onOpenAdminPanel={() => setIsAdminPanelOpen(true)}
+        onSyncDatabase={() => handleSyncDatabase(false)}
+        isSyncing={isSyncing}
         onGenerateAndSave={handleGenerateAndSave}
         onQuickDownloadPdf={handleQuickDownloadPdf}
         onQuickDownloadMss={handleQuickDownloadMss}
         isExporting={isExporting}
       />
+
+      {/* Sync feedback notification banner if any */}
+      {syncMessage && (
+        <div className="bg-indigo-900/80 border-b border-indigo-700/50 py-1.5 px-4 text-center text-xs text-indigo-200 font-semibold animate-fadeIn">
+          {syncMessage}
+        </div>
+      )}
 
       {/* 2. Sets Selector Tabs: [Set 1], [Set 2], [+ Přidat set], [Lidovky], [Zbytek] */}
       <SetTabs
@@ -508,9 +444,9 @@ export default function App() {
       />
 
       {/* 3. Main Two-Column Layout */}
-      <main className="flex-1 max-w-7xl w-full mx-auto p-4 sm:p-6 grid grid-cols-1 lg:grid-cols-12 gap-5 overflow-hidden">
+      <main className="flex-1 max-w-7xl w-full mx-auto p-3 sm:p-4 grid grid-cols-1 lg:grid-cols-12 gap-3.5 sm:gap-4 overflow-hidden">
         {/* LEVÝ SLOUPEC: Aktivní Set */}
-        <section className="lg:col-span-6 flex flex-col h-[calc(100vh-175px)] min-h-[500px]">
+        <section className="lg:col-span-6 flex flex-col h-[calc(100vh-148px)] min-h-[500px]">
           <ActiveSetColumn
             activeSet={activeSet}
             songsMap={songsMap}
@@ -525,13 +461,13 @@ export default function App() {
         </section>
 
         {/* PRAVÝ SLOUPEC: Knihovna skladeb */}
-        <section className="lg:col-span-6 flex flex-col h-[calc(100vh-175px)] min-h-[500px]">
+        <section className="lg:col-span-6 flex flex-col h-[calc(100vh-148px)] min-h-[500px]">
           <LibraryColumn
             songs={songs}
             activeSet={activeSet}
             allSets={sets}
             onAddSongToActiveSet={handleAddSongToActiveSet}
-            onOpenDataSources={() => setIsDriveSettingsOpen(true)}
+            onSyncDatabase={() => handleSyncDatabase(false)}
           />
         </section>
       </main>
@@ -539,21 +475,16 @@ export default function App() {
       {/* Offline Status Badge */}
       <OfflineIndicator />
 
-      {/* Google Drive Settings Modal: 2 functions (Source Data Folder & Export Folder) */}
-      <DriveSettingsModal
-        isOpen={isDriveSettingsOpen}
-        onClose={() => setIsDriveSettingsOpen(false)}
-        user={user}
-        onSignIn={handleSignIn}
-        onSignOut={handleSignOut}
-        driveToken={driveToken}
-        driveSettings={driveSettings}
-        onSaveDriveSettings={handleSaveDriveSettings}
-        driveStatus={driveStatus}
-        isLoadingDrive={isLoadingDrive}
-        onRefreshDrive={() => driveToken && checkDriveStatus(driveToken, driveSettings)}
-        onSyncFromDrive={handleSyncFromDrive}
-      />
+      {/* Admin Panel Modal (Admin role only) */}
+      {role === 'admin' && (
+        <AdminPanelModal
+          isOpen={isAdminPanelOpen}
+          onClose={() => setIsAdminPanelOpen(false)}
+          onTriggerSync={handleSyncDatabase}
+          isSyncing={isSyncing}
+          totalSongs={songs.length}
+        />
+      )}
 
       {/* Export & Drive Results Modal */}
       <ExportModal
@@ -567,4 +498,23 @@ export default function App() {
       />
     </div>
   );
+}
+
+export default function App() {
+  const { isAuthenticated, isLoading } = useAuth();
+
+  if (isLoading) {
+    return (
+      <div className="min-h-screen bg-slate-950 flex items-center justify-center text-slate-400 text-xs">
+        <span className="w-5 h-5 rounded-full border-2 border-indigo-500 border-t-transparent animate-spin mr-2" />
+        <span>Načítám Setlist Studio...</span>
+      </div>
+    );
+  }
+
+  if (!isAuthenticated) {
+    return <LoginScreen />;
+  }
+
+  return <SetlistStudio />;
 }

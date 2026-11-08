@@ -1,30 +1,29 @@
 import React from 'react';
 import {
   Music,
-  Cloud,
   CloudUpload,
   FileText,
   Code2,
-  Database,
-  CheckCircle2,
-  AlertTriangle,
+  RefreshCw,
   LogOut,
-  FolderSync,
+  ShieldCheck,
+  User as UserIcon,
+  Settings,
 } from 'lucide-react';
-import { User } from 'firebase/auth';
+import { UserRole } from '../types';
 import { PWAInstallButton } from './PWAInstallButton';
 
 interface HeaderProps {
   eventName: string;
   onEventNameChange: (name: string) => void;
-  user: User | null;
-  onSignIn: () => void;
-  onSignOut: () => void;
+  role: UserRole;
+  onLogout: () => void;
   isOnline: boolean;
-  driveReady: boolean;
   totalMasterSongs: number;
   totalSetSongs: number;
-  onOpenDataSources: () => void;
+  onOpenAdminPanel?: () => void;
+  onSyncDatabase: () => void;
+  isSyncing: boolean;
   onGenerateAndSave: () => void;
   onQuickDownloadPdf: () => void;
   onQuickDownloadMss: () => void;
@@ -34,14 +33,12 @@ interface HeaderProps {
 export const Header: React.FC<HeaderProps> = ({
   eventName,
   onEventNameChange,
-  user,
-  onSignIn,
-  onSignOut,
-  isOnline,
-  driveReady,
+  role,
+  onLogout,
   totalMasterSongs,
-  totalSetSongs,
-  onOpenDataSources,
+  onOpenAdminPanel,
+  onSyncDatabase,
+  isSyncing,
   onGenerateAndSave,
   onQuickDownloadPdf,
   onQuickDownloadMss,
@@ -69,92 +66,46 @@ export const Header: React.FC<HeaderProps> = ({
                 type="text"
                 value={eventName}
                 onChange={(e) => onEventNameChange(e.target.value)}
-                placeholder="např. Večírek Roudnice..."
+                placeholder="např. Oleško 22.08.2026..."
                 className="w-full rounded-lg bg-slate-800/90 border border-slate-700 px-3 py-1.5 text-sm font-semibold text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition"
               />
             </div>
           </div>
 
-          {/* Center / Right controls */}
+          {/* Right Controls */}
           <div className="flex flex-wrap items-center gap-2 sm:gap-3 justify-end">
-            {/* Repertoire & Drive Folders Settings button */}
+            {/* Database Sync button (available for all to refresh from backend API) */}
             <button
-              onClick={onOpenDataSources}
-              className="flex items-center gap-1.5 rounded-lg border border-slate-700 bg-slate-800/90 hover:bg-slate-700/90 px-3 py-1.5 text-xs font-semibold text-slate-200 hover:text-white transition shadow-sm"
-              title="Nastavit a spravovat Google Drive složky pro import a export"
+              onClick={onSyncDatabase}
+              disabled={isSyncing}
+              className="flex items-center gap-1.5 rounded-lg border border-slate-700 bg-slate-800/90 hover:bg-slate-700/90 px-3 py-1.5 text-xs font-semibold text-slate-200 hover:text-white transition shadow-sm disabled:opacity-50"
+              title="Aktualizovat písničky z centrální Google Drive databáze"
             >
-              <FolderSync className="w-3.5 h-3.5 text-indigo-400" />
-              <span>Složky Disku ({totalMasterSongs})</span>
+              <RefreshCw className={`w-3.5 h-3.5 text-indigo-400 ${isSyncing ? 'animate-spin' : ''}`} />
+              <span>Načíst databázi ({totalMasterSongs})</span>
             </button>
+
+            {/* Admin only: Nastavení & Logy */}
+            {role === 'admin' && onOpenAdminPanel && (
+              <button
+                onClick={onOpenAdminPanel}
+                className="flex items-center gap-1.5 rounded-lg border border-amber-500/40 bg-amber-950/40 hover:bg-amber-900/50 px-3 py-1.5 text-xs font-bold text-amber-300 transition shadow-sm"
+                title="Administrátorská konzole, nastavení Google Service Account a chybové logy"
+              >
+                <Settings className="w-3.5 h-3.5 text-amber-400" />
+                <span>Nastavení &amp; Logy</span>
+              </button>
+            )}
 
             {/* PWA install prompt */}
             <PWAInstallButton />
-
-            {/* Google Drive Auth Button */}
-            {user ? (
-              <div className="flex items-center gap-1.5 rounded-lg bg-slate-800/90 border border-slate-700 px-2 py-1 text-xs">
-                {user.photoURL ? (
-                  <img
-                    src={user.photoURL}
-                    alt={user.displayName || 'Google'}
-                    className="w-5 h-5 rounded-full ring-1 ring-emerald-500"
-                  />
-                ) : (
-                  <div className="w-5 h-5 rounded-full bg-emerald-600 flex items-center justify-center text-[10px] font-bold text-white">
-                    {user.email?.charAt(0).toUpperCase() || 'G'}
-                  </div>
-                )}
-                <span className="text-slate-300 hidden sm:inline max-w-[100px] truncate" title={user.email || ''}>
-                  {user.displayName || user.email}
-                </span>
-                <span
-                  className="flex items-center text-[11px] text-emerald-400 font-medium ml-0.5"
-                  title="Google Drive připojen"
-                >
-                  <CheckCircle2 className="w-3.5 h-3.5" />
-                </span>
-                <button
-                  onClick={onSignOut}
-                  className="p-1 text-slate-400 hover:text-rose-400 transition ml-0.5"
-                  title="Odhlásit z Google"
-                >
-                  <LogOut className="w-3.5 h-3.5" />
-                </button>
-              </div>
-            ) : (
-              <button
-                onClick={onSignIn}
-                className="flex items-center gap-1.5 rounded-lg border border-slate-700 bg-white hover:bg-slate-100 text-slate-900 px-2.5 py-1.5 text-xs font-medium shadow-sm transition active:scale-95"
-                title="Přihlásit přes Google pro přístup na Google Drive"
-              >
-                <svg className="w-3.5 h-3.5" viewBox="0 0 24 24">
-                  <path
-                    fill="#4285F4"
-                    d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"
-                  />
-                  <path
-                    fill="#34A853"
-                    d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"
-                  />
-                  <path
-                    fill="#FBBC05"
-                    d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z"
-                  />
-                  <path
-                    fill="#EA4335"
-                    d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z"
-                  />
-                </svg>
-                <span>Přihlásit Google</span>
-              </button>
-            )}
 
             {/* Quick Export Downloads */}
             <div className="flex items-center rounded-lg bg-slate-800/80 border border-slate-700 p-0.5">
               <button
                 onClick={onQuickDownloadPdf}
                 className="flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium text-slate-300 hover:text-white hover:bg-slate-700 transition"
-                title="Stáhnout barevné PDF přímo do počítače"
+                title="Stáhnout barevné PDF přímo do zařízení"
               >
                 <FileText className="w-3.5 h-3.5 text-rose-400" />
                 <span>PDF</span>
@@ -163,21 +114,44 @@ export const Header: React.FC<HeaderProps> = ({
               <button
                 onClick={onQuickDownloadMss}
                 className="flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium text-slate-300 hover:text-white hover:bg-slate-700 transition"
-                title="Stáhnout MobileSheets XML (.mss) přímo do počítače"
+                title="Stáhnout MobileSheets XML (.mss) přímo do zařízení"
               >
                 <Code2 className="w-3.5 h-3.5 text-emerald-400" />
                 <span>MSS</span>
               </button>
             </div>
 
-            {/* Primary Action Button: "Vygenerovat a Uložit na Drive" */}
+            {/* Role Badge and Logout */}
+            <div className="flex items-center gap-1.5 rounded-lg bg-slate-800/90 border border-slate-700 px-2 py-1 text-xs">
+              {role === 'admin' ? (
+                <span className="flex items-center gap-1 text-amber-300 font-bold">
+                  <ShieldCheck className="w-3.5 h-3.5 text-amber-400" />
+                  <span className="hidden sm:inline">Admin</span>
+                </span>
+              ) : (
+                <span className="flex items-center gap-1 text-indigo-300 font-medium">
+                  <UserIcon className="w-3.5 h-3.5 text-indigo-400" />
+                  <span className="hidden sm:inline">Muzikant</span>
+                </span>
+              )}
+
+              <button
+                onClick={onLogout}
+                className="p-1 text-slate-400 hover:text-rose-400 transition ml-1"
+                title="Odhlásit se a zamknout aplikaci PINem"
+              >
+                <LogOut className="w-3.5 h-3.5" />
+              </button>
+            </div>
+
+            {/* Primary Action Button: "Export MSS na Disk" */}
             <button
               onClick={onGenerateAndSave}
               disabled={isExporting}
               className="flex items-center gap-2 rounded-xl bg-gradient-to-r from-indigo-600 via-indigo-500 to-violet-600 hover:from-indigo-500 hover:to-violet-500 px-3.5 py-1.5 text-xs sm:text-sm font-bold text-white shadow-md shadow-indigo-600/30 transition active:scale-95 disabled:opacity-50 disabled:pointer-events-none"
             >
               <CloudUpload className="w-4 h-4" />
-              <span>{isExporting ? 'Generuji...' : 'Vygenerovat a Uložit na Drive'}</span>
+              <span>{isExporting ? 'Ukládám na Disk...' : 'Export MSS na Disk'}</span>
             </button>
           </div>
         </div>

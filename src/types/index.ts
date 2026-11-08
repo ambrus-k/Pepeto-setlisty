@@ -52,6 +52,29 @@ export interface PendingUpload {
   error?: string;
 }
 
+export type UserRole = 'user' | 'admin';
+
+export interface AdminLogEntry {
+  id: string;
+  timestamp: number;
+  type: 'info' | 'success' | 'warning' | 'error';
+  action: string;
+  details: string;
+}
+
+export interface ServerDriveStatus {
+  serviceAccountConfigured: boolean;
+  authMode?: 'oauth2' | 'service_account' | 'none';
+  clientEmail?: string;
+  projectId?: string;
+  dataFolderId?: string;
+  exportFolderId?: string;
+  hasCachedData: boolean;
+  totalCachedSongs: number;
+  lastSyncedAt?: number;
+  lastExportedAt?: number;
+}
+
 export interface DriveSettings {
   dataFolderName: string;
   dataFolderId?: string;

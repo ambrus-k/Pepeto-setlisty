@@ -1,6 +1,7 @@
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { SetlistGroup, Song } from '../types';
+import { CZECH_FONT_BOLD_BASE64, CZECH_FONT_REGULAR_BASE64 } from './czechFontBase64';
 
 /**
  * Escapes characters for XML
@@ -80,6 +81,7 @@ export function generateMssXml(
     for (const songId of set.songIds) {
       const song = songsMap.get(songId);
       if (song) {
+        // Názvy musí být VŽDY podle souboru MSS pro MobileSheets!
         const title = escapeXml(song.mss_title);
         xml += `    <Song>\n`;
         xml += `      <Title>${title}</Title>\n`;
@@ -104,6 +106,7 @@ export function generateMssXml(
  * - Column 1: ID (large bold centered number)
  * - Column 2: Song title with colored background & red saxophone tags (- ALT Sax / - TENOR Sax)
  * - Solid crisp black table borders
+ * - Full native Czech diacritics (ě, š, č, ř, ž, ý, á, í, é, ů, ú, ť, ď, ň) via embedded TrueType font
  * - Bottom right footer: "${safeProjectName}.xlsx"
  */
 export async function generatePdf(
@@ -121,6 +124,14 @@ export async function generatePdf(
   const pageHeight = doc.internal.pageSize.getHeight();
   const safeProjectName = projectName.trim() || 'Oleško 22.08.2026';
 
+  // Registrace Unicode fontů s kompletní podporou české diakritiky
+  doc.addFileToVFS('CzechFont-Bold.ttf', CZECH_FONT_BOLD_BASE64);
+  doc.addFont('CzechFont-Bold.ttf', 'CzechFont', 'bold');
+  doc.addFileToVFS('CzechFont-Regular.ttf', CZECH_FONT_REGULAR_BASE64);
+  doc.addFont('CzechFont-Regular.ttf', 'CzechFont', 'normal');
+
+  const fontName = 'CzechFont';
+
   const validSets = sets.filter((s) => s.songIds.length > 0);
   const setsToRender = validSets.length > 0 ? validSets : sets;
 
@@ -136,7 +147,7 @@ export async function generatePdf(
     }
 
     // Page Header: centered List title
-    doc.setFont('helvetica', 'bold');
+    doc.setFont(fontName, 'bold');
     doc.setFontSize(22);
     doc.setTextColor(0, 0, 0);
     doc.text(listTitle, pageWidth / 2, 17, { align: 'center' });
@@ -198,7 +209,8 @@ export async function generatePdf(
       body: bodyData,
       theme: 'grid',
       styles: {
-        font: 'helvetica',
+        font: 'CzechFont',
+        fontStyle: 'bold',
         fontSize: titleFontSize,
         cellPadding: { top: 3.5, bottom: 3.5, left: 4.5, right: 4.5 },
         lineWidth: 0.45,
@@ -268,13 +280,13 @@ export async function generatePdf(
                 'F'
               );
 
-              // 1. Draw main title part in black
-              doc.setFont('helvetica', 'bold');
+              // 1. Draw main title part in black with CzechFont
+              doc.setFont('CzechFont', 'bold');
               doc.setFontSize(titleFontSize);
               doc.setTextColor(0, 0, 0);
               doc.text(mainPart, cellX, cellY);
 
-              // 2. Draw Saxophone note in bold vivid RED
+              // 2. Draw Saxophone note in bold vivid RED with CzechFont
               const mainWidth = doc.getTextWidth(mainPart);
               doc.setTextColor(255, 0, 0); // Bold vivid red #ff0000
               doc.text(saxPart, cellX + mainWidth, cellY);
@@ -285,7 +297,7 @@ export async function generatePdf(
     });
 
     // Page footer: bottom right filename "${safeProjectName}.xlsx"
-    doc.setFont('helvetica', 'normal');
+    doc.setFont('CzechFont', 'normal');
     doc.setFontSize(8);
     doc.setTextColor(30, 30, 30);
     const footerName = safeProjectName.toLowerCase().endsWith('.xlsx')

@@ -1,4 +1,5 @@
 import * as XLSX from 'xlsx';
+import { DOMParser as XmlDomParser } from '@xmldom/xmldom';
 import { Song } from '../types';
 import { parseExcelAllStyles, CellStyleInfo } from './excelStyleParser';
 
@@ -43,27 +44,57 @@ export function normalizeHexColor(rawColor: string | undefined | null, fallback:
   return fallback;
 }
 
+function getDOMParser(): any {
+  if (typeof window !== 'undefined' && typeof window.DOMParser !== 'undefined') {
+    return new window.DOMParser();
+  }
+  return new XmlDomParser();
+}
+
 /**
  * Parse .mss XML file
  */
 export function parseMssXml(xmlText: string): ParsedMssItem[] {
-  const parser = new DOMParser();
-  const xmlDoc = parser.parseFromString(xmlText, 'text/xml');
-  const songNodes = xmlDoc.getElementsByTagName('Song');
   const songs: ParsedMssItem[] = [];
 
-  for (let i = 0; i < songNodes.length; i++) {
-    const songNode = songNodes[i];
-    const titleEl = songNode.getElementsByTagName('Title')[0];
-    const songIdEl = songNode.getElementsByTagName('SongId')[0];
+  try {
+    const parser = getDOMParser();
+    const xmlDoc = parser.parseFromString(xmlText, 'text/xml');
+    const songNodes = xmlDoc.getElementsByTagName('Song');
 
-    const title = titleEl?.textContent?.trim() || '';
-    const idStr = songIdEl?.textContent?.trim() || '';
-    const id = parseInt(idStr, 10);
+    for (let i = 0; i < songNodes.length; i++) {
+      const songNode = songNodes[i];
+      const titleEl = songNode.getElementsByTagName('Title')[0];
+      const songIdEl = songNode.getElementsByTagName('SongId')[0];
 
-    if (!isNaN(id) && title) {
-      if (!songs.some((s) => s.id === id)) {
-        songs.push({ id, mss_title: title });
+      const title = titleEl?.textContent?.trim() || '';
+      const idStr = songIdEl?.textContent?.trim() || '';
+      const id = parseInt(idStr, 10);
+
+      if (!isNaN(id) && title) {
+        if (!songs.some((s) => s.id === id)) {
+          songs.push({ id, mss_title: title });
+        }
+      }
+    }
+  } catch (err) {
+    console.warn('DOMParser failed on MSS XML, falling back to regex parser:', err);
+  }
+
+  // Regex fallback if DOMParser produced 0 items or failed
+  if (songs.length === 0) {
+    const songRegex = /<Song>([\s\S]*?)<\/Song>/gi;
+    let match: RegExpExecArray | null;
+    while ((match = songRegex.exec(xmlText)) !== null) {
+      const inner = match[1];
+      const titleMatch = inner.match(/<Title>([\s\S]*?)<\/Title>/i);
+      const idMatch = inner.match(/<SongId>([\s\S]*?)<\/SongId>/i);
+      if (titleMatch && idMatch) {
+        const title = titleMatch[1].trim();
+        const id = parseInt(idMatch[1].trim(), 10);
+        if (!isNaN(id) && title && !songs.some((s) => s.id === id)) {
+          songs.push({ id, mss_title: title });
+        }
       }
     }
   }
@@ -228,46 +259,13 @@ export async function parseXlsx(buffer: ArrayBuffer): Promise<ParsedXlsxItem[]> 
         if (val) detectedBgColor = String(val).trim();
       }
 
-      // Check OpenXML cell styles:
-      // A) Check ID cell style
+      // Barvu skladby určuje VÝHRADNĚ barva výplně u čísla (idCellStyle), NIKOLIV pod názvem skladby!
       const idCellStyle = sheetStyle?.cellColors.get(XLSX.utils.encode_cell({ r, c: colIdIdx }));
       if (idCellStyle?.bgColor && idCellStyle.bgColor !== '#ffffff') {
         detectedBgColor = idCellStyle.bgColor;
       }
       if (idCellStyle?.textColor) {
         detectedTextColor = idCellStyle.textColor;
-      }
-
-      // B) Check Title cell style
-      const titleCellStyle = sheetStyle?.cellColors.get(XLSX.utils.encode_cell({ r, c: colTitleIdx }));
-      if (titleCellStyle?.bgColor && titleCellStyle.bgColor !== '#ffffff' && !detectedBgColor) {
-        detectedBgColor = titleCellStyle.bgColor;
-      }
-      if (titleCellStyle?.textColor && !detectedTextColor) {
-        detectedTextColor = titleCellStyle.textColor;
-      }
-
-      // C) Check all other cells in this row for non-white background
-      if (!detectedBgColor || detectedBgColor === '#ffffff') {
-        for (let c = range.s.c; c <= range.e.c; c++) {
-          const addr = XLSX.utils.encode_cell({ r, c });
-          const cStyle = sheetStyle?.cellColors.get(addr);
-          if (cStyle?.bgColor && cStyle.bgColor !== '#ffffff') {
-            detectedBgColor = cStyle.bgColor;
-            break;
-          }
-          if (cStyle?.textColor && cStyle.textColor !== '#000000' && !detectedTextColor) {
-            detectedTextColor = cStyle.textColor;
-          }
-        }
-      }
-
-      // D) Row-level style fallback
-      if ((!detectedBgColor || detectedBgColor === '#ffffff') && rowStyle?.bgColor && rowStyle.bgColor !== '#ffffff') {
-        detectedBgColor = rowStyle.bgColor;
-      }
-      if (!detectedTextColor && rowStyle?.textColor) {
-        detectedTextColor = rowStyle.textColor;
       }
 
       // E) Sheet tab color fallback
@@ -321,81 +319,232 @@ export async function parseXlsx(buffer: ArrayBuffer): Promise<ParsedXlsxItem[]> 
 }
 
 /**
+/**
+ * Cleans a song title for similarity comparison:
+ * - Strips leading track/index numbers (e.g. "103 Alenka v říši divů", "01  Bilitis", "501  Jetelíček")
+ * - Strips saxophone annotations ("alt sax", "tenor sax", "alto sax", etc.) as per instructions:
+ *   "Pokud je někde napsáno tenor sax nebo alto sax, nesmí to určovat možnosti obarvení té skladby"
+ * - Strips instrument & suffix tags ("_kyt", "electric guitar", "vocal", "text", etc.)
+ * - Strips diacritics / accents (č -> c, ř -> r, á -> a)
+ * - Lowercases and removes extra punctuation / spaces
+ */
+export function cleanSongTitle(raw: string): string {
+  if (!raw) return '';
+  let str = String(raw).trim();
+
+  // 1. Remove leading track / ID number (e.g., "103 Alenka", "001 Bilitis", "501  Jetelíček")
+  str = str.replace(/^\s*\d+[\s\.\-_:]+/, '');
+
+  // 2. Remove saxophone annotations (case-insensitive)
+  str = str.replace(/[-_–—/]?\s*(?:alt|tenor|alto|sopran|bariton)?\s*(?:sax|saxophone|saxofon)[a-z0-9]*/gi, ' ');
+  str = str.replace(/\b(?:alt|tenor|alto|sopran|bariton)?\s*sax\b/gi, ' ');
+
+  // 3. Remove instrument & suffix annotations
+  str = str.replace(/[-_–—/]?\s*(?:electric\s*guitar|guitar|kytara|akustika|basa|bass|bicí|drums|klávesy|keys|vocal|vokál|vok)\b[a-z0-9]*/gi, ' ');
+  str = str.replace(/_\w+/g, ' '); // e.g. _kyt, _alt, _vocal
+  str = str.replace(/\b(?:kyt|guitar|vocal|text|kytara|akordy)\b/gi, ' ');
+
+  // 4. Remove diacritics
+  str = str.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+
+  // 5. Lowercase and replace non-alphanumeric with spaces
+  str = str.toLowerCase().replace(/[^a-z0-9\s]/g, ' ');
+
+  // 6. Collapse multiple whitespace
+  return str.trim().replace(/\s+/g, ' ');
+}
+
+/**
+ * Calculates similarity between two cleaned song titles (0.0 to 1.0)
+ * Handles substring inclusion, token overlap, and character bigrams.
+ */
+export function calculateTitleSimilarity(cleanA: string, cleanB: string): number {
+  if (!cleanA || !cleanB) return 0;
+  if (cleanA === cleanB) return 1.0;
+
+  // 1. Direct substring inclusion (e.g. "alenka v risi divu" in "karel zich alenka v risi divu")
+  if (cleanA.length >= 3 && cleanB.length >= 3) {
+    if (cleanB.includes(cleanA)) {
+      return 0.88 + 0.1 * (cleanA.length / cleanB.length);
+    }
+    if (cleanA.includes(cleanB)) {
+      return 0.88 + 0.1 * (cleanB.length / cleanA.length);
+    }
+  }
+
+  // 2. Token overlap (words with length >= 2)
+  const tokensA = cleanA.split(' ').filter((w) => w.length >= 2);
+  const tokensB = cleanB.split(' ').filter((w) => w.length >= 2);
+
+  if (tokensA.length > 0 && tokensB.length > 0) {
+    const commonTokens = tokensA.filter((w) => tokensB.includes(w));
+    // If all words of the shorter title are contained in the longer title
+    if (commonTokens.length === tokensA.length && tokensA.length >= 1) {
+      return 0.92;
+    }
+    if (commonTokens.length === tokensB.length && tokensB.length >= 1) {
+      return 0.92;
+    }
+
+    const tokenDice = (2 * commonTokens.length) / (tokensA.length + tokensB.length);
+    if (tokenDice >= 0.5) {
+      return 0.65 + 0.3 * tokenDice;
+    }
+  }
+
+  // 3. Character bigram Dice coefficient (handles typos, small spelling variations)
+  const bigramsA = new Set<string>();
+  for (let i = 0; i < cleanA.length - 1; i++) {
+    bigramsA.add(cleanA.slice(i, i + 2));
+  }
+  const bigramsB = new Set<string>();
+  for (let i = 0; i < cleanB.length - 1; i++) {
+    bigramsB.add(cleanB.slice(i, i + 2));
+  }
+
+  let commonBigrams = 0;
+  for (const bg of bigramsA) {
+    if (bigramsB.has(bg)) commonBigrams++;
+  }
+
+  const bigramScore = (2 * commonBigrams) / (bigramsA.size + bigramsB.size);
+  return bigramScore;
+}
+
+/**
  * Pairs songs from MSS (ID + clean Title) with XLSX (ID + visual PDF title + colors).
- * Exact requirements:
- * id: (Integer)
- * mss_title: (Čistý název pro XML export, načteno z MSS)
- * pdf_title: (Název s poznámkami pro tisk, načteno z XLSX, např. "Modrá - Žlutej pes - ALT Sax")
- * textColor: (HEX kód barvy textu z XLSX buňky)
- * bgColor: (HEX kód barvy pozadí z XLSX buňky)
+ * Rules:
+ * - MSS is the authoritative source for songs and IDs.
+ * - XLSX is used strictly to color songs based on title similarity and cell background colors.
+ * - Instrument tags ("tenor sax", "alto sax", etc.) are stripped so they don't block matching.
+ * - Text color is always high-contrast #000000; only cell background colors are applied.
+ */
+/**
+ * Strips leading ID numbers (e.g. "002 ", "502  ") and extensions (.xml, .pdf) from MSS titles
+ */
+export function cleanDisplayTitle(rawTitle: string): string {
+  if (!rawTitle) return '';
+  let str = rawTitle.trim();
+  str = str.replace(/\.(xml|pdf|mss)$/i, '');
+  str = str.replace(/^\d{1,4}\s*[-–._]?\s*/, '');
+  return str.trim() || rawTitle.trim();
+}
+
+/**
+ * Pairs songs from MSS (ID + clean Title) with XLSX (ID + visual PDF title + colors).
+ * Rules:
+ * - MSS (Pepeto_Complete_Setlist.mss) is the authoritative baseline for song names and IDs.
+ * - XLSX (Seznam_not_Peppeta_Complete.xlsx) is used to determine colors from the number cell.
+ * - Names in XLSX serve only for comparison to ensure correct color pairing.
+ * - Collisions (different songs with accidental same local numbering, e.g. Škoda lásky vs Last Waltz) are strictly rejected.
+ * - Text color is always high-contrast #000000; only cell background colors are applied.
  */
 export function pairMssAndXlsx(mssList: ParsedMssItem[], xlsxList: ParsedXlsxItem[]): Song[] {
   const result: Song[] = [];
-  const xlsxById = new Map<number, ParsedXlsxItem>();
-  const xlsxByTitle = new Map<string, ParsedXlsxItem>();
 
-  for (const item of xlsxList) {
-    if (item.id !== undefined) {
-      xlsxById.set(item.id, item);
-    }
-    if (item.pdf_title) {
-      const normalizedTitle = item.pdf_title
-        .toLowerCase()
-        .replace(/[^a-z0-9]/g, '');
-      xlsxByTitle.set(normalizedTitle, item);
-    }
-  }
-
-  // First pair all MSS songs
-  const matchedXlsxIds = new Set<number>();
+  // Pre-clean all XLSX items
+  const preparedXlsx = xlsxList.map((item) => {
+    const cleanTitle = cleanSongTitle(item.pdf_title || '');
+    const isVybarveny = item.category ? item.category.toLowerCase().includes('vybarven') : false;
+    const hasColor = Boolean(
+      item.bgColor &&
+      item.bgColor.toLowerCase() !== '#ffffff' &&
+      item.bgColor.toLowerCase() !== '#000000'
+    );
+    return {
+      item,
+      cleanTitle,
+      hasColor,
+      isVybarveny,
+      id: item.id,
+      bgColor: item.bgColor,
+      pdfTitle: item.pdf_title,
+      category: item.category,
+    };
+  });
 
   for (const mss of mssList) {
-    let matchedXlsx = xlsxById.get(mss.id);
+    const cleanMss = cleanSongTitle(mss.mss_title);
+    const mssBaseTitle = cleanDisplayTitle(mss.mss_title);
 
-    // If no direct ID match, try title matching
-    if (!matchedXlsx) {
-      const normalizedMssTitle = mss.mss_title.toLowerCase().replace(/[^a-z0-9]/g, '');
-      for (const [normTitle, item] of xlsxByTitle.entries()) {
-        if (normTitle.includes(normalizedMssTitle) || normalizedMssTitle.includes(normTitle)) {
-          matchedXlsx = item;
-          break;
+    // 1. Find matching candidate in XLSX with strict collision protection
+    let bestCandidate: (typeof preparedXlsx)[0] | null = null;
+    let highestScore = 0;
+
+    for (const cand of preparedXlsx) {
+      let score = 0;
+
+      // Check ID match
+      const idMatches = cand.id !== undefined && cand.id === mss.id;
+
+      // Title similarity
+      const titleSim = calculateTitleSimilarity(cleanMss, cand.cleanTitle);
+
+      if (idMatches) {
+        // If ID matches, verify that titles do not radically contradict each other
+        // (Prevents collisions like song 2 "The Last Waltz" matching local lidovky 2 "Škoda lásky")
+        const isKnownEquivalent = mss.id === 120 || mss.id === 145 || mss.id === 311;
+        if (titleSim >= 0.20 || isKnownEquivalent) {
+          score = 1.0 + titleSim; // Strong ID + Title agreement
+        } else {
+          score = 0; // REJECT collision! Different songs with accidental same local numbering
         }
+      } else if (titleSim >= 0.70) {
+        // High title similarity match without exact ID
+        score = titleSim;
+      }
+
+      // Strong priority boost for the official colored sheet "Seznam - vybarvený"
+      if (cand.isVybarveny && score > 0) {
+        score += 0.50;
+      }
+
+      if (score > highestScore) {
+        highestScore = score;
+        bestCandidate = cand;
       }
     }
 
-    if (matchedXlsx && matchedXlsx.id !== undefined) {
-      matchedXlsxIds.add(matchedXlsx.id);
+    // Determine final background color:
+    // Barvu skladby určuje barva výplně buňky s číslem v XLSX!
+    let finalBgColor = '#ffffff';
+    let finalCategory = undefined;
+
+    if (bestCandidate && highestScore >= 0.50) {
+      if (bestCandidate.bgColor && bestCandidate.bgColor.toLowerCase() !== '#ffffff') {
+        finalBgColor = normalizeHexColor(bestCandidate.bgColor, '#ffffff');
+      }
+      finalCategory = bestCandidate.category;
     }
 
-    const pdfTitle = matchedXlsx?.pdf_title || mss.mss_title;
-    const textColor = normalizeHexColor(matchedXlsx?.textColor, '#000000');
-    const bgColor = normalizeHexColor(matchedXlsx?.bgColor, '#ffffff');
+    // Fallback: Czech lidovky (500-series 501..528 and 550) are yellow #ffffcc
+    if (finalBgColor === '#ffffff') {
+      const isLidovky =
+        (finalCategory && finalCategory.toLowerCase().includes('lidovk')) ||
+        mss.mss_title.toLowerCase().includes('lidovk') ||
+        (mss.id >= 500 && mss.id < 600);
+      if (isLidovky) {
+        finalBgColor = '#ffffcc';
+        if (!finalCategory) finalCategory = 'Lidovky';
+      }
+    }
+
+    // ZÁSADNÍ PRAVIDLO: Názvy musí být VŽDY podle souboru MSS, aby komunikovaly
+    // s aplikací MobileSheets, kde jsou pod těmito názvy uloženy písničky, jinak by setlist nefungoval.
+    // Barvy musí být vždy podle Excelu podle porovnání názvů.
+    const authoritativeMssTitle = mss.mss_title;
 
     result.push({
       id: mss.id,
-      mss_title: mss.mss_title,
-      pdf_title: pdfTitle,
-      textColor,
-      bgColor,
-      category: matchedXlsx?.category,
+      mss_title: authoritativeMssTitle,
+      pdf_title: authoritativeMssTitle,
+      textColor: '#000000', // Vždy vysoce kontrastní černá
+      bgColor: finalBgColor,
+      category: finalCategory,
     });
   }
 
-  // Include any extra songs found in XLSX that weren't in MSS
-  for (const item of xlsxList) {
-    if (item.id !== undefined && !matchedXlsxIds.has(item.id) && !result.some((s) => s.id === item.id)) {
-      result.push({
-        id: item.id,
-        mss_title: item.pdf_title?.split('-')[0]?.trim() || `Song ${item.id}`,
-        pdf_title: item.pdf_title || `Song ${item.id}`,
-        textColor: normalizeHexColor(item.textColor, '#000000'),
-        bgColor: normalizeHexColor(item.bgColor, '#ffffff'),
-        category: item.category,
-      });
-    }
-  }
-
-  // Sort by id ascending
+  // Sort strictly by song ID ascending
   result.sort((a, b) => a.id - b.id);
   return result;
 }

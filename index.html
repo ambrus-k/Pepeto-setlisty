@@ -3,6 +3,37 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <script>
+      // In AI Studio preview environment, HMR WebSocket is disabled by environment constraints.
+      if (typeof window !== 'undefined') {
+        const OrigWebSocket = window.WebSocket;
+        if (OrigWebSocket) {
+          window.WebSocket = function (url, protocols) {
+            const urlStr = String(url || '');
+            if (urlStr.includes('vite') || urlStr.includes('@vite') || urlStr.includes('ais-dev')) {
+              const dummy = new EventTarget();
+              dummy.readyState = 1; // OPEN
+              dummy.send = () => {};
+              dummy.close = () => {};
+              setTimeout(() => {
+                dummy.dispatchEvent(new Event('open'));
+              }, 0);
+              return dummy;
+            }
+            return new OrigWebSocket(url, protocols);
+          };
+          window.WebSocket.prototype = OrigWebSocket.prototype;
+        }
+
+        const origConsoleError = console.error;
+        console.error = function (...args) {
+          if (args.some(arg => String(arg?.message || arg || '').includes('WebSocket closed without opened'))) {
+            return;
+          }
+          origConsoleError.apply(console, args);
+        };
+      }
+    </script>
     <title>MobileSheets Setlist Studio</title>
     <meta name="description" content="Profesionální správce a generátor hudebních setlistů pro kapelu s exportem do barevného PDF a MobileSheets XML (.mss) a synchronizací s Google Drive." />
     <meta property="og:title" content="MobileSheets Setlist Studio" />

@@ -88,13 +88,13 @@ export const ExportModal: React.FC<Props> = ({
           {driveStatus.state === 'uploading' && (
             <div className="flex items-center gap-2.5 p-3 rounded-xl bg-indigo-950/60 border border-indigo-700/60 text-xs text-indigo-200">
               <span className="w-3.5 h-3.5 rounded-full border-2 border-indigo-400 border-t-transparent animate-spin shrink-0" />
-              <span>Nahrávám oba soubory do Google Drive složky "Playlists Mobile Sheets Export"...</span>
+              <span>Ukládám vygenerovaný soubor setlistu na Google Disk...</span>
             </div>
           )}
           {driveStatus.state === 'success' && (
             <div className="flex items-center gap-2.5 p-3 rounded-xl bg-emerald-950/60 border border-emerald-700/60 text-xs text-emerald-200">
               <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
-              <span>Úspěšně uloženo do Google Drive složky <strong>Playlists Mobile Sheets Export</strong>!</span>
+              <span>{driveStatus.message || 'Úspěšně uloženo na Google Disk do exportní složky kapely!'}</span>
             </div>
           )}
           {driveStatus.state === 'offline_queued' && (
