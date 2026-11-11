@@ -25,10 +25,10 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   const { pin } = req.body || {};
   const cleanedPin = String(pin || '').trim();
 
-  const adminPin = (process.env.ADMIN_PIN || '7890').trim().replace(/^["']|["']$/g, '');
-  const userPin = (process.env.USER_PIN || '1234').trim().replace(/^["']|["']$/g, '');
+  const adminPin = (process.env.ADMIN_PIN || '251925').trim().replace(/^["']|["']$/g, '');
+  const userPin = (process.env.USER_PIN || '2004').trim().replace(/^["']|["']$/g, '');
 
-  if (cleanedPin && (cleanedPin === adminPin || cleanedPin === '7890')) {
+  if (cleanedPin && (cleanedPin === adminPin || cleanedPin === '251925')) {
     return res.status(200).json({
       success: true,
       role: 'admin',
@@ -36,7 +36,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     });
   }
 
-  if (cleanedPin && (cleanedPin === userPin || cleanedPin === '1234')) {
+  if (cleanedPin && (cleanedPin === userPin || cleanedPin === '2004')) {
     return res.status(200).json({
       success: true,
       role: 'user',

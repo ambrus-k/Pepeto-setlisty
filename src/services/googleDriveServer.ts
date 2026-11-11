@@ -84,6 +84,16 @@ function savePersistedFolderSettings(settings: { dataFolderId?: string; exportFo
   }
 }
 
+// Permanent default Google Drive folder IDs for Pepeto band
+export const PERMANENT_DATA_FOLDER_ID = '1pZuDqPX6OVbGoYdfOg_p3DqJ0cEhAiq2';
+export const PERMANENT_EXPORT_FOLDER_ID = '1gvZxnQDDdQtIMGO7-ai877tdZcYysfs-';
+
+// Default OAuth2 credentials read from environment variables (.env / Vercel Environment Variables)
+export const PERMANENT_CLIENT_ID = process.env.GOOGLE_CLIENT_ID || '';
+export const PERMANENT_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET || '';
+export const PERMANENT_REFRESH_TOKEN = process.env.GOOGLE_REFRESH_TOKEN || '';
+export const PERMANENT_CLIENT_EMAIL = process.env.GOOGLE_CLIENT_EMAIL || '';
+
 /**
  * Extracts a Google Drive Folder ID from a raw ID or full URL
  */
@@ -98,15 +108,16 @@ export function extractFolderId(input?: string): string {
 }
 
 /**
- * Returns current active folder IDs (persisted in JSON or from .env)
+ * Returns current active folder IDs (persisted in JSON, from .env, or permanent defaults)
+ * Always guarantees valid permanent IDs for Vercel and Android deployments.
  */
 export function getActiveFolderIds(): { dataFolderId: string; exportFolderId: string } {
   const persisted = loadPersistedFolderSettings();
-  const data = persisted.dataFolderId || (process.env.DRIVE_DATA_FOLDER_ID || process.env.GOOGLE_DRIVE_DATA_FOLDER_ID || '').trim();
-  const exportF = persisted.exportFolderId || (process.env.DRIVE_EXPORT_FOLDER_ID || process.env.GOOGLE_DRIVE_EXPORT_FOLDER_ID || '').trim();
+  const data = persisted.dataFolderId || (process.env.DRIVE_DATA_FOLDER_ID || process.env.GOOGLE_DRIVE_DATA_FOLDER_ID || PERMANENT_DATA_FOLDER_ID).trim();
+  const exportF = persisted.exportFolderId || (process.env.DRIVE_EXPORT_FOLDER_ID || process.env.GOOGLE_DRIVE_EXPORT_FOLDER_ID || PERMANENT_EXPORT_FOLDER_ID).trim();
   return {
-    dataFolderId: extractFolderId(data),
-    exportFolderId: extractFolderId(exportF),
+    dataFolderId: extractFolderId(data) || PERMANENT_DATA_FOLDER_ID,
+    exportFolderId: extractFolderId(exportF) || PERMANENT_EXPORT_FOLDER_ID,
   };
 }
 
@@ -114,10 +125,10 @@ export function getActiveFolderIds(): { dataFolderId: string; exportFolderId: st
  * Saves updated folder IDs configured in the Admin UI
  */
 export function saveFolderSettings(dataFolderInput: string, exportFolderInput: string): { dataFolderId: string; exportFolderId: string } {
-  const cleanData = extractFolderId(dataFolderInput);
-  const cleanExport = extractFolderId(exportFolderInput);
+  const cleanData = extractFolderId(dataFolderInput) || PERMANENT_DATA_FOLDER_ID;
+  const cleanExport = extractFolderId(exportFolderInput) || PERMANENT_EXPORT_FOLDER_ID;
   savePersistedFolderSettings({ dataFolderId: cleanData, exportFolderId: cleanExport });
-  addLog('info', 'FOLDERS_UPDATED', `Složky Disku aktualizovány v nastavení: Data=${cleanData || '(výchozí)'}, Export=${cleanExport || '(výchozí)'}`);
+  addLog('info', 'FOLDERS_UPDATED', `Složky Disku aktualizovány v nastavení: Data=${cleanData}, Export=${cleanExport}`);
   return { dataFolderId: cleanData, exportFolderId: cleanExport };
 }
 
@@ -129,9 +140,9 @@ export function saveFolderSettings(dataFolderInput: string, exportFolderInput: s
  * Fallback: Service Account JWT (Client Email, Private Key).
  */
 export function getGoogleAuthClient(): OAuth2Client | JWT | null {
-  const clientId = (process.env.GOOGLE_CLIENT_ID || '').trim();
-  const clientSecret = (process.env.GOOGLE_CLIENT_SECRET || '').trim();
-  const refreshToken = (process.env.GOOGLE_REFRESH_TOKEN || '').trim();
+  const clientId = (process.env.GOOGLE_CLIENT_ID || PERMANENT_CLIENT_ID).trim();
+  const clientSecret = (process.env.GOOGLE_CLIENT_SECRET || PERMANENT_CLIENT_SECRET).trim();
+  const refreshToken = (process.env.GOOGLE_REFRESH_TOKEN || PERMANENT_REFRESH_TOKEN).trim();
 
   if (clientId && clientSecret && refreshToken) {
     try {
@@ -143,7 +154,7 @@ export function getGoogleAuthClient(): OAuth2Client | JWT | null {
     }
   }
 
-  const clientEmail = (process.env.GOOGLE_CLIENT_EMAIL || '').trim();
+  const clientEmail = (process.env.GOOGLE_CLIENT_EMAIL || PERMANENT_CLIENT_EMAIL).trim();
   let privateKey = (process.env.GOOGLE_PRIVATE_KEY || '').trim();
 
   // Validate that clientEmail is valid and privateKey is an authentic PEM private key
@@ -455,13 +466,13 @@ export async function testDriveConnection(): Promise<{
   overallStatus: 'OK' | 'API_DISABLED' | 'AUTH_ERROR' | 'FOLDER_NOT_SHARED' | 'FILES_MISSING';
   message: string;
 }> {
-  const clientId = (process.env.GOOGLE_CLIENT_ID || '').trim();
-  const clientSecret = (process.env.GOOGLE_CLIENT_SECRET || '').trim();
-  const refreshToken = (process.env.GOOGLE_REFRESH_TOKEN || '').trim();
+  const clientId = (process.env.GOOGLE_CLIENT_ID || PERMANENT_CLIENT_ID).trim();
+  const clientSecret = (process.env.GOOGLE_CLIENT_SECRET || PERMANENT_CLIENT_SECRET).trim();
+  const refreshToken = (process.env.GOOGLE_REFRESH_TOKEN || PERMANENT_REFRESH_TOKEN).trim();
   const isOAuth2 = Boolean(clientId && clientSecret && refreshToken);
 
-  const clientEmail = (process.env.GOOGLE_CLIENT_EMAIL || '').trim();
-  const projectId = (process.env.GOOGLE_PROJECT_ID || '').trim();
+  const clientEmail = (process.env.GOOGLE_CLIENT_EMAIL || PERMANENT_CLIENT_EMAIL).trim();
+  const projectId = (process.env.GOOGLE_PROJECT_ID || 'pepeto-setlists').trim();
   const auth = getGoogleAuthClient();
 
   const authMode: 'oauth2' | 'service_account' | 'none' = isOAuth2
@@ -930,12 +941,12 @@ export async function exportToGoogleDrive(
  * Returns current status of server-side Google Drive configuration
  */
 export function getServerDriveStatus(): ServerDriveStatus {
-  const clientId = (process.env.GOOGLE_CLIENT_ID || '').trim();
-  const clientSecret = (process.env.GOOGLE_CLIENT_SECRET || '').trim();
-  const refreshToken = (process.env.GOOGLE_REFRESH_TOKEN || '').trim();
+  const clientId = (process.env.GOOGLE_CLIENT_ID || PERMANENT_CLIENT_ID).trim();
+  const clientSecret = (process.env.GOOGLE_CLIENT_SECRET || PERMANENT_CLIENT_SECRET).trim();
+  const refreshToken = (process.env.GOOGLE_REFRESH_TOKEN || PERMANENT_REFRESH_TOKEN).trim();
   const oauth2Configured = Boolean(clientId && clientSecret && refreshToken);
 
-  const clientEmail = (process.env.GOOGLE_CLIENT_EMAIL || '').trim();
+  const clientEmail = (process.env.GOOGLE_CLIENT_EMAIL || PERMANENT_CLIENT_EMAIL).trim();
   const privateKey = (process.env.GOOGLE_PRIVATE_KEY || '').trim();
   const serviceAccountConfigured = Boolean(clientEmail && privateKey);
 
@@ -945,7 +956,7 @@ export function getServerDriveStatus(): ServerDriveStatus {
     ? 'service_account'
     : 'none';
 
-  const projectId = (process.env.GOOGLE_PROJECT_ID || '').trim();
+  const projectId = (process.env.GOOGLE_PROJECT_ID || 'pepeto-setlists').trim();
   const { dataFolderId, exportFolderId } = getActiveFolderIds();
 
   return {

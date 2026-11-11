@@ -26,10 +26,10 @@ app.post('/api/auth/verify', (req: Request, res: Response) => {
   const { pin } = req.body || {};
   const cleaned = String(pin || '').trim();
 
-  const adminPin = (process.env.ADMIN_PIN || '7890').trim().replace(/^["']|["']$/g, '');
-  const userPin = (process.env.USER_PIN || '1234').trim().replace(/^["']|["']$/g, '');
+  const adminPin = (process.env.ADMIN_PIN || '251925').trim().replace(/^["']|["']$/g, '');
+  const userPin = (process.env.USER_PIN || '2004').trim().replace(/^["']|["']$/g, '');
 
-  if (cleaned && (cleaned === adminPin || cleaned === '7890')) {
+  if (cleaned && (cleaned === adminPin || cleaned === '251925')) {
     return res.json({
       success: true,
       role: 'admin',
@@ -37,7 +37,7 @@ app.post('/api/auth/verify', (req: Request, res: Response) => {
     });
   }
 
-  if (cleaned && (cleaned === userPin || cleaned === '1234')) {
+  if (cleaned && (cleaned === userPin || cleaned === '2004')) {
     return res.json({
       success: true,
       role: 'user',

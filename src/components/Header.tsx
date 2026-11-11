@@ -9,6 +9,7 @@ import {
   ShieldCheck,
   User as UserIcon,
   Settings,
+  Upload,
 } from 'lucide-react';
 import { UserRole } from '../types';
 import { PWAInstallButton } from './PWAInstallButton';
@@ -28,6 +29,8 @@ interface HeaderProps {
   onQuickDownloadPdf: () => void;
   onQuickDownloadMss: () => void;
   isExporting: boolean;
+  onDirectFileImport: (file: File) => void;
+  onOpenImportModal: () => void;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -43,7 +46,20 @@ export const Header: React.FC<HeaderProps> = ({
   onQuickDownloadPdf,
   onQuickDownloadMss,
   isExporting,
+  onDirectFileImport,
+  onOpenImportModal,
 }) => {
+  const fileInputRef = React.useRef<HTMLInputElement>(null);
+
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      onDirectFileImport(file);
+      // Reset input value so re-selecting same file triggers change
+      e.target.value = '';
+    }
+  };
+
   return (
     <header className="sticky top-0 z-30 bg-slate-900/95 backdrop-blur-md border-b border-slate-800 shadow-lg">
       <div className="max-w-7xl mx-auto px-4 py-3 sm:px-6">
@@ -74,6 +90,36 @@ export const Header: React.FC<HeaderProps> = ({
 
           {/* Right Controls */}
           <div className="flex flex-wrap items-center gap-2 sm:gap-3 justify-end">
+            {/* Hidden file input for .mss and .xlsx as specified in requirement 1 */}
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept=".mss, application/vnd.openxmlformats-officedocument.spreadsheetml.sheet, application/vnd.ms-excel, .xlsx, .xls"
+              onChange={handleFileChange}
+              className="hidden"
+            />
+
+            {/* Importovat setlist button (activates hidden file input & opens modal) */}
+            <div className="inline-flex items-center rounded-lg border border-indigo-500/40 bg-indigo-950/40 p-0.5 shadow-sm">
+              <button
+                type="button"
+                onClick={() => fileInputRef.current?.click()}
+                className="flex items-center gap-1.5 px-2.5 py-1 text-xs font-semibold text-indigo-200 hover:text-white hover:bg-indigo-900/60 rounded-md transition cursor-pointer"
+                title="Nahrát soubor .mss (XML) nebo .xlsx (Excel) ze zařízení"
+              >
+                <Upload className="w-3.5 h-3.5 text-indigo-400" />
+                <span>Importovat setlist</span>
+              </button>
+              <button
+                type="button"
+                onClick={onOpenImportModal}
+                className="px-1.5 py-1 text-[11px] font-bold text-indigo-300 hover:text-white hover:bg-indigo-900/70 rounded-md border-l border-indigo-800/60 transition cursor-pointer"
+                title="Otevřít průvodce importem s náhledem a ukázkami"
+              >
+                Náhled
+              </button>
+            </div>
+
             {/* Database Sync button (available for all to refresh from backend API) */}
             <button
               onClick={onSyncDatabase}

@@ -1,7 +1,22 @@
-import jsPDF from 'jspdf';
-import autoTable from 'jspdf-autotable';
+import type { jsPDF as JsPdfType } from 'jspdf';
+import * as jspdfModule from 'jspdf';
+import * as autoTableModule from 'jspdf-autotable';
 import { SetlistGroup, Song } from '../types';
 import { CZECH_FONT_BOLD_BASE64, CZECH_FONT_REGULAR_BASE64 } from './czechFontBase64';
+
+// Resilient class constructor resolution across Vite (browser ESM) and Node.js (tsx / CommonJS)
+const JsPDFConstructor: new (...args: any[]) => JsPdfType =
+  (jspdfModule as any).jsPDF ||
+  (jspdfModule as any).default?.jsPDF ||
+  (jspdfModule as any).default ||
+  (jspdfModule as any);
+
+// Resilient autoTable function resolution
+const applyAutoTable: (doc: any, options: any) => void =
+  (autoTableModule as any).default?.default ||
+  (autoTableModule as any).default ||
+  (autoTableModule as any).applyPlugin ||
+  (autoTableModule as any);
 
 /**
  * Escapes characters for XML
@@ -37,6 +52,61 @@ function hexToRgb(hex: string, fallback: [number, number, number] = [255, 255, 2
   const num = parseInt(clean, 16);
   if (isNaN(num)) return fallback;
   return [(num >> 16) & 255, (num >> 8) & 255, num & 255];
+}
+
+/**
+ * Strips redundant leading song numbers / track indexes from titles for PDF stage sheets:
+ * In the PDF, column 1 already displays the colored song number (e.g. 103, 44, 8, 503).
+ * Having a duplicate 3-digit number in column 2 (e.g. "103 Alenka", "044 Baroko") is redundant.
+ *
+ * Examples:
+ * - "103 Alenka v říši divů", 103 -> "Alenka v říši divů"
+ * - "044 Baroko", 44 -> "Baroko"
+ * - "008 Nějak se vytrácíš má lásko", 8 -> "Nějak se vytrácíš má lásko"
+ * - "503  Sova - alt sax", 503 -> "Sova - alt sax"
+ * - "276 Shrek - It Is You ... - ALT Sax", 276 -> "Shrek - It Is You ... - ALT Sax"
+ * - "050 Čekej tiše - TENOR Sax", 50 -> "Čekej tiše - TENOR Sax"
+ * - "Baroko", 44 -> "Baroko"
+ */
+export function cleanTitleForPdf(rawTitle: string, songId?: number): string {
+  if (!rawTitle) return '';
+  const trimmed = rawTitle.trim();
+
+  // Match leading digits (1-4 digits) followed by delimiter/space and subsequent text
+  const match = trimmed.match(/^(\d{1,4})(?:[\s.\-_:)]+|\s*[-–—]\s*)(.+)$/i);
+  let cleanText = trimmed;
+  if (match) {
+    const numStr = match[1];
+    const leadingNum = parseInt(numStr, 10);
+    const rest = match[2].trim();
+
+    if (rest.length > 0) {
+      // 1. Definite match: leading number equals the song's ID
+      if (songId !== undefined && songId >= 0 && leadingNum === songId) {
+        cleanText = rest;
+      } else if (numStr.startsWith('0') && numStr.length >= 2) {
+        cleanText = rest;
+      } else if (songId === undefined || leadingNum === songId || (numStr.length === 3 && leadingNum >= 1 && leadingNum <= 999)) {
+        cleanText = rest;
+      }
+    }
+  }
+
+  // Normalize and preserve saxophone information so it ALWAYS generates into the PDF:
+  // - Handles Excel formats: "- ALT Sax", "- TENOR Sax", "ALT Sax", "TENOR Sax"
+  // - Handles MSS formats: "_alt", "_tenor", "_alt sax", "_tenor sax"
+  // - Handles informal notes: "- alt", "- tenor", "- alt sax", "- tenor sax"
+  cleanText = cleanText
+    .replace(/\s*[-–—_]+\s*alt\s*sax\b/gi, ' - ALT Sax')
+    .replace(/\s*[-–—_]+\s*tenor\s*sax\b/gi, ' - TENOR Sax')
+    .replace(/\s*[-–—_]+\s*sopran\s*sax\b/gi, ' - SOPRÁN Sax')
+    .replace(/\s*[-–—_]+\s*bariton\s*sax\b/gi, ' - BARYTON Sax')
+    .replace(/\s*[-–—_]+\s*alt\b(?!\s*sax)/gi, ' - ALT Sax')
+    .replace(/\s*[-–—_]+\s*tenor\b(?!\s*sax)/gi, ' - TENOR Sax')
+    .replace(/\s*[-–—_]+\s*sopran\b(?!\s*sax)/gi, ' - SOPRÁN Sax')
+    .replace(/\s*[-–—_]+\s*bariton\b(?!\s*sax)/gi, ' - BARYTON Sax');
+
+  return cleanText.trim();
 }
 
 /**
@@ -83,11 +153,13 @@ export function generateMssXml(
       if (song) {
         // Názvy musí být VŽDY podle souboru MSS pro MobileSheets!
         const title = escapeXml(song.mss_title);
+        const fileName = escapeXml(song.fileName || `${song.mss_title}.pdf`);
+        const fileType = song.fileType !== undefined ? song.fileType : 1;
         xml += `    <Song>\n`;
         xml += `      <Title>${title}</Title>\n`;
         xml += `      <SongId>${song.id}</SongId>\n`;
-        xml += `      <FileName>${title}.pdf</FileName>\n`;
-        xml += `      <FileType>1</FileType>\n`;
+        xml += `      <FileName>${fileName}</FileName>\n`;
+        xml += `      <FileType>${fileType}</FileType>\n`;
         xml += `    </Song>\n`;
       }
     }
@@ -113,8 +185,8 @@ export async function generatePdf(
   projectName: string,
   sets: SetlistGroup[],
   songsMap: Map<number, Song>
-): Promise<{ doc: jsPDF; blob: Blob; dataUrl: string }> {
-  const doc = new jsPDF({
+): Promise<{ doc: JsPdfType; blob: Blob; dataUrl: string }> {
+  const doc = new JsPDFConstructor({
     orientation: 'portrait',
     unit: 'mm',
     format: 'a4',
@@ -169,9 +241,13 @@ export async function generatePdf(
       // For Lidovky: if 9 items, insert blank separator rows after row 3 and row 6
       set.songIds.forEach((songId, idx) => {
         const song = songsMap.get(songId);
+        const displayId = song ? (song.id < 0 ? '?' : String(song.id)) : (songId < 0 ? '?' : String(songId));
+        const cleanTitle = song
+          ? cleanTitleForPdf(song.pdf_title, song.id)
+          : (songId < 0 ? 'Neznámá skladba' : `Skladba #${songId}`);
         rows.push({
-          id: song ? String(song.id) : String(songId),
-          title: song ? song.pdf_title : `Skladba #${songId}`,
+          id: displayId,
+          title: cleanTitle,
           bgColor: song?.bgColor || '#fef3c7',
         });
         if ((idx === 2 || idx === 5) && set.songIds.length >= 7) {
@@ -181,9 +257,13 @@ export async function generatePdf(
     } else {
       rows = set.songIds.map((songId) => {
         const song = songsMap.get(songId);
+        const displayId = song ? (song.id < 0 ? '?' : String(song.id)) : (songId < 0 ? '?' : String(songId));
+        const cleanTitle = song
+          ? cleanTitleForPdf(song.pdf_title, song.id)
+          : (songId < 0 ? 'Neznámá skladba' : `Skladba #${songId}`);
         return {
-          id: song ? String(song.id) : String(songId),
-          title: song ? song.pdf_title : `Skladba #${songId}`,
+          id: displayId,
+          title: cleanTitle,
           bgColor: song?.bgColor || '#ffffff',
         };
       });
@@ -203,7 +283,7 @@ export async function generatePdf(
 
     const bodyData = rows.map((r) => [r.id, r.title]);
 
-    autoTable(doc, {
+    applyAutoTable(doc, {
       startY: 23,
       margin: { left: 16, right: 16 },
       body: bodyData,
@@ -233,7 +313,7 @@ export async function generatePdf(
           textColor: [0, 0, 0],
         },
       },
-      didParseCell: (data) => {
+      didParseCell: (data: any) => {
         if (data.section === 'body') {
           const rowData = rows[data.row.index];
           if (rowData && !rowData.isBlank) {
@@ -254,13 +334,13 @@ export async function generatePdf(
           }
         }
       },
-      didDrawCell: (data) => {
+      didDrawCell: (data: any) => {
         if (data.section === 'body' && data.column.index === 1) {
           const rowData = rows[data.row.index];
           if (rowData && !rowData.isBlank) {
             const title = rowData.title;
-            // Check for saxophone notes: "- ALT Sax", "- TENOR Sax", "ALT Sax", "TENOR Sax"
-            const saxMatch = title.match(/(-?\s*(?:ALT|TENOR)\s*Sax.*)$/i);
+            // Check for saxophone notes: "- ALT Sax", "- TENOR Sax", "- SOPRÁN Sax", etc.
+            const saxMatch = title.match(/(\s*[-–—]?\s*(?:ALT|TENOR|SOPR[AÁ]N|BARYTON)\s*Sax.*)$/i);
             if (saxMatch) {
               const saxPart = saxMatch[1];
               const mainPart = title.substring(0, title.length - saxPart.length);

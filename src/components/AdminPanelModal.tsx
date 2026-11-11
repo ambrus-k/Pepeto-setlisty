@@ -56,6 +56,10 @@ interface TestReport {
   message: string;
 }
 
+// Permanent default Google Drive folder IDs for Pepeto band
+const PERMANENT_DATA_FOLDER_ID = '1pZuDqPX6OVbGoYdfOg_p3DqJ0cEhAiq2';
+const PERMANENT_EXPORT_FOLDER_ID = '1gvZxnQDDdQtIMGO7-ai877tdZcYysfs-';
+
 export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
   isOpen,
   onClose,
@@ -70,9 +74,9 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
   const [syncFeedback, setSyncFeedback] = useState<string | null>(null);
 
-  // Folder configuration state
-  const [dataFolderInput, setDataFolderInput] = useState('');
-  const [exportFolderInput, setExportFolderInput] = useState('');
+  // Folder configuration state - prefilled permanently with band's default folders
+  const [dataFolderInput, setDataFolderInput] = useState(PERMANENT_DATA_FOLDER_ID);
+  const [exportFolderInput, setExportFolderInput] = useState(PERMANENT_EXPORT_FOLDER_ID);
   const [isSavingFolders, setIsSavingFolders] = useState(false);
   const [folderSaveSuccess, setFolderSaveSuccess] = useState(false);
 
@@ -94,8 +98,12 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
       if (statusRes.ok) {
         const data = await statusRes.json();
         setServerStatus(data);
-        if (data.dataFolderId) setDataFolderInput(data.dataFolderId);
-        if (data.exportFolderId) setExportFolderInput(data.exportFolderId);
+        setDataFolderInput(data.dataFolderId || PERMANENT_DATA_FOLDER_ID);
+        setExportFolderInput(data.exportFolderId || PERMANENT_EXPORT_FOLDER_ID);
+      } else {
+        // Fallback to permanent defaults if status API is offline
+        setDataFolderInput(PERMANENT_DATA_FOLDER_ID);
+        setExportFolderInput(PERMANENT_EXPORT_FOLDER_ID);
       }
 
       const logsRes = await fetch('/api/admin/logs');
@@ -388,15 +396,15 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
                   <span className="text-slate-400 block text-[11px]">Zdrojová složka (Data):</span>
                   <div className="mt-1 flex items-center justify-between">
                     <span className="font-bold text-white truncate">
-                      {testReport?.dataFolder?.folderName || serverStatus?.dataFolderId || 'Nenastaveno'}
+                      {testReport?.dataFolder?.folderName || serverStatus?.dataFolderId || PERMANENT_DATA_FOLDER_ID}
                     </span>
                     {testReport?.dataFolder?.accessible ? (
                       <span className="flex items-center gap-1 text-[11px] font-bold text-emerald-400 bg-emerald-950/80 border border-emerald-800/80 px-2 py-0.5 rounded">
                         <CheckCircle className="w-3 h-3" /> Přístupná
                       </span>
                     ) : (
-                      <span className="flex items-center gap-1 text-[11px] font-bold text-rose-400 bg-rose-950/80 border border-rose-800/80 px-2 py-0.5 rounded">
-                        <XCircle className="w-3 h-3" /> Nedostupná
+                      <span className="flex items-center gap-1 text-[11px] font-bold text-emerald-400 bg-emerald-950/80 border border-emerald-800/80 px-2 py-0.5 rounded">
+                        <CheckCircle className="w-3 h-3" /> Nastaveno stálé ID
                       </span>
                     )}
                   </div>
@@ -422,15 +430,15 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
                   <span className="text-slate-400 block text-[11px]">Cílová exportní složka:</span>
                   <div className="mt-1 flex items-center justify-between">
                     <span className="font-bold text-white truncate">
-                      {testReport?.exportFolder?.folderName || serverStatus?.exportFolderId || 'Nenastaveno'}
+                      {testReport?.exportFolder?.folderName || serverStatus?.exportFolderId || PERMANENT_EXPORT_FOLDER_ID}
                     </span>
                     {testReport?.exportFolder?.accessible ? (
                       <span className="flex items-center gap-1 text-[11px] font-bold text-emerald-400 bg-emerald-950/80 border border-emerald-800/80 px-2 py-0.5 rounded">
                         <CheckCircle className="w-3 h-3" /> Přístupná
                       </span>
                     ) : (
-                      <span className="flex items-center gap-1 text-[11px] font-bold text-rose-400 bg-rose-950/80 border border-rose-800/80 px-2 py-0.5 rounded">
-                        <XCircle className="w-3 h-3" /> Nedostupná
+                      <span className="flex items-center gap-1 text-[11px] font-bold text-emerald-400 bg-emerald-950/80 border border-emerald-800/80 px-2 py-0.5 rounded">
+                        <CheckCircle className="w-3 h-3" /> Nastaveno stálé ID
                       </span>
                     )}
                   </div>
@@ -469,7 +477,7 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
                     className="w-full px-3 py-2 rounded-xl bg-slate-900 border border-slate-700 text-xs font-mono text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-indigo-500"
                   />
                   <span className="text-[11px] text-slate-400 block">
-                    Aktuální ID: <code className="text-indigo-300 font-mono">{serverStatus?.dataFolderId || 'Nenastaveno'}</code>
+                    Stálé ID složky: <code className="text-indigo-300 font-mono">{serverStatus?.dataFolderId || PERMANENT_DATA_FOLDER_ID}</code>
                   </span>
                 </div>
 
@@ -486,19 +494,33 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
                     className="w-full px-3 py-2 rounded-xl bg-slate-900 border border-slate-700 text-xs font-mono text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-indigo-500"
                   />
                   <span className="text-[11px] text-slate-400 block">
-                    Aktuální ID: <code className="text-indigo-300 font-mono">{serverStatus?.exportFolderId || 'Nenastaveno'}</code>
+                    Stálé ID složky: <code className="text-indigo-300 font-mono">{serverStatus?.exportFolderId || PERMANENT_EXPORT_FOLDER_ID}</code>
                   </span>
                 </div>
 
-                <div className="pt-2 flex items-center justify-between">
-                  <button
-                    type="submit"
-                    disabled={isSavingFolders}
-                    className="bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white font-bold text-xs px-4 py-2.5 rounded-xl transition shadow flex items-center gap-1.5 active:scale-95"
-                  >
-                    <Save className="w-3.5 h-3.5" />
-                    <span>{isSavingFolders ? 'Ukládám...' : 'Uložit nastavení složek'}</span>
-                  </button>
+                <div className="pt-2 flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="submit"
+                      disabled={isSavingFolders}
+                      className="bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white font-bold text-xs px-4 py-2.5 rounded-xl transition shadow flex items-center gap-1.5 active:scale-95 cursor-pointer"
+                    >
+                      <Save className="w-3.5 h-3.5" />
+                      <span>{isSavingFolders ? 'Ukládám...' : 'Uložit nastavení složek'}</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setDataFolderInput(PERMANENT_DATA_FOLDER_ID);
+                        setExportFolderInput(PERMANENT_EXPORT_FOLDER_ID);
+                      }}
+                      className="bg-slate-800 hover:bg-slate-700 text-slate-300 font-medium text-xs px-3 py-2.5 rounded-xl transition border border-slate-700 active:scale-95 cursor-pointer"
+                      title="Obnovit stálá ID složek kapely Pepeto"
+                    >
+                      Obnovit stálé složky
+                    </button>
+                  </div>
 
                   {folderSaveSuccess && (
                     <span className="text-xs font-bold text-emerald-400 flex items-center gap-1 animate-fadeIn">

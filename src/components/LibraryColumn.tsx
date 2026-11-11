@@ -1,6 +1,7 @@
 import React, { useState, useMemo } from 'react';
 import { Search, X, Plus, Check, Filter, HardDrive } from 'lucide-react';
 import { Song, SetlistGroup } from '../types';
+import { cleanTitleForPdf } from '../services/exportGenerator';
 
 interface LibraryColumnProps {
   songs: Song[];
@@ -14,7 +15,7 @@ interface LibraryColumnProps {
  * Highlights saxophone annotations in red if present
  */
 function renderHighlightedTitle(title: string, textColor: string) {
-  const saxRegex = /(-?\s*(?:ALT|TENOR)\s*Sax\w*)/i;
+  const saxRegex = /(\s*[-–—]?\s*(?:ALT|TENOR|SOPR[AÁ]N|BARYTON)\s*Sax.*)/i;
   const match = title.match(saxRegex);
   if (!match) {
     return <span style={{ color: textColor }}>{title}</span>;
@@ -236,7 +237,7 @@ export const LibraryColumn: React.FC<LibraryColumnProps> = ({
                       #{song.id}
                     </span>
                     <span className="font-bold text-xs sm:text-sm truncate tracking-tight">
-                      {renderHighlightedTitle(song.pdf_title, song.textColor || '#000000')}
+                      {renderHighlightedTitle(cleanTitleForPdf(song.pdf_title, song.id), song.textColor || '#000000')}
                     </span>
                   </div>
 

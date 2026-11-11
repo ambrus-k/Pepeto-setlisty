@@ -431,20 +431,57 @@ export function cleanDisplayTitle(rawTitle: string): string {
 }
 
 /**
+ * Extracts candidate variants of a song title (full string + isolated core song title parts around dashes/hyphens).
+ * When titles contain dashes ('-', '–', '—', '/'), evaluates both full string and isolated core title segments.
+ */
+export function extractTitleVariants(rawTitle: string): string[] {
+  if (!rawTitle) return [];
+  const variants = new Set<string>();
+
+  // 1. Full cleaned title
+  const fullClean = cleanSongTitle(rawTitle);
+  if (fullClean) variants.add(fullClean);
+
+  // 2. Cleaned display title (without track/index prefix)
+  const displayClean = cleanSongTitle(cleanDisplayTitle(rawTitle));
+  if (displayClean) variants.add(displayClean);
+
+  // 3. Isolated segments split by dashes or slashes (e.g. "310 - Zatancuj si so mnou", "Moje milá - Marek Ztracený")
+  const segments = rawTitle.split(/[-–—/]/);
+  if (segments.length > 1) {
+    for (const seg of segments) {
+      const segClean = cleanSongTitle(seg);
+      if (segClean && segClean.length >= 3 && !/^\d+$/.test(segClean)) {
+        variants.add(segClean);
+      }
+      const segDisplay = cleanSongTitle(cleanDisplayTitle(seg));
+      if (segDisplay && segDisplay.length >= 3 && !/^\d+$/.test(segDisplay)) {
+        variants.add(segDisplay);
+      }
+    }
+  }
+
+  return Array.from(variants);
+}
+
+/**
  * Pairs songs from MSS (ID + clean Title) with XLSX (ID + visual PDF title + colors).
  * Rules:
  * - MSS (Pepeto_Complete_Setlist.mss) is the authoritative baseline for song names and IDs.
  * - XLSX (Seznam_not_Peppeta_Complete.xlsx) is used to determine colors from the number cell.
  * - Names in XLSX serve only for comparison to ensure correct color pairing.
- * - Collisions (different songs with accidental same local numbering, e.g. Škoda lásky vs Last Waltz) are strictly rejected.
+ * - Fuzzy matching checks both the full string and isolated song segments for dashed titles.
+ * - MobileSheets compatibility: MSS title is strictly authoritative and maintained for song names.
  * - Text color is always high-contrast #000000; only cell background colors are applied.
  */
 export function pairMssAndXlsx(mssList: ParsedMssItem[], xlsxList: ParsedXlsxItem[]): Song[] {
   const result: Song[] = [];
 
-  // Pre-clean all XLSX items
+  // Pre-clean all XLSX items with their full and isolated title variants
   const preparedXlsx = xlsxList.map((item) => {
-    const cleanTitle = cleanSongTitle(item.pdf_title || '');
+    const rawTitle = item.pdf_title || '';
+    const cleanTitle = cleanSongTitle(rawTitle);
+    const titleVariants = extractTitleVariants(rawTitle);
     const isVybarveny = item.category ? item.category.toLowerCase().includes('vybarven') : false;
     const hasColor = Boolean(
       item.bgColor &&
@@ -453,7 +490,9 @@ export function pairMssAndXlsx(mssList: ParsedMssItem[], xlsxList: ParsedXlsxIte
     );
     return {
       item,
+      rawTitle,
       cleanTitle,
+      titleVariants,
       hasColor,
       isVybarveny,
       id: item.id,
@@ -464,8 +503,9 @@ export function pairMssAndXlsx(mssList: ParsedMssItem[], xlsxList: ParsedXlsxIte
   });
 
   for (const mss of mssList) {
-    const cleanMss = cleanSongTitle(mss.mss_title);
-    const mssBaseTitle = cleanDisplayTitle(mss.mss_title);
+    const rawMssTitle = mss.mss_title;
+    const cleanMss = cleanSongTitle(rawMssTitle);
+    const mssVariants = extractTitleVariants(rawMssTitle);
 
     // 1. Find matching candidate in XLSX with strict collision protection
     let bestCandidate: (typeof preparedXlsx)[0] | null = null;
@@ -477,8 +517,22 @@ export function pairMssAndXlsx(mssList: ParsedMssItem[], xlsxList: ParsedXlsxIte
       // Check ID match
       const idMatches = cand.id !== undefined && cand.id === mss.id;
 
-      // Title similarity
-      const titleSim = calculateTitleSimilarity(cleanMss, cand.cleanTitle);
+      // Title similarity: evaluate full string similarity
+      let titleSim = calculateTitleSimilarity(cleanMss, cand.cleanTitle);
+
+      // Enhanced fuzzy matching for dashed titles: compare across full strings AND isolated core song title segments
+      if (titleSim < 0.95 && (mssVariants.length > 1 || cand.titleVariants.length > 1)) {
+        for (const vMss of mssVariants) {
+          for (const vCand of cand.titleVariants) {
+            const sim = calculateTitleSimilarity(vMss, vCand);
+            if (sim > titleSim) {
+              titleSim = sim;
+              if (titleSim >= 0.95) break;
+            }
+          }
+          if (titleSim >= 0.95) break;
+        }
+      }
 
       if (idMatches) {
         // If ID matches, verify that titles do not radically contradict each other
@@ -533,11 +587,12 @@ export function pairMssAndXlsx(mssList: ParsedMssItem[], xlsxList: ParsedXlsxIte
     // s aplikací MobileSheets, kde jsou pod těmito názvy uloženy písničky, jinak by setlist nefungoval.
     // Barvy musí být vždy podle Excelu podle porovnání názvů.
     const authoritativeMssTitle = mss.mss_title;
+    const authoritativePdfTitle = bestCandidate?.pdfTitle || authoritativeMssTitle;
 
     result.push({
       id: mss.id,
       mss_title: authoritativeMssTitle,
-      pdf_title: authoritativeMssTitle,
+      pdf_title: authoritativePdfTitle,
       textColor: '#000000', // Vždy vysoce kontrastní černá
       bgColor: finalBgColor,
       category: finalCategory,

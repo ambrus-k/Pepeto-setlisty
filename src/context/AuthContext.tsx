@@ -83,14 +83,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
 
     // 2. Offline fallback PIN verification (in case dev/offline mode)
-    if (cleaned === '7890') {
+    if (cleaned === '251925') {
       setRole('admin');
       localStorage.setItem(STORAGE_KEY_ROLE, 'admin');
       localStorage.setItem(STORAGE_KEY_AUTH_TIME, String(Date.now()));
       return { success: true, role: 'admin' };
     }
 
-    if (cleaned === '1234') {
+    if (cleaned === '2004') {
       setRole('user');
       localStorage.setItem(STORAGE_KEY_ROLE, 'user');
       localStorage.setItem(STORAGE_KEY_AUTH_TIME, String(Date.now()));

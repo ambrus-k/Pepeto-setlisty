@@ -16,6 +16,9 @@ const KEYS = {
   SETTINGS: 'app_settings',
 };
 
+export const PERMANENT_DATA_FOLDER_ID = '1pZuDqPX6OVbGoYdfOg_p3DqJ0cEhAiq2';
+export const PERMANENT_EXPORT_FOLDER_ID = '1gvZxnQDDdQtIMGO7-ai877tdZcYysfs-';
+
 export const storage = {
   // Master songs library
   async saveSongs(songs: Song[]): Promise<void> {
@@ -81,9 +84,9 @@ export const storage = {
     const saved = await store.getItem<any>(KEYS.SETTINGS);
     return {
       dataFolderName: saved?.dataFolderName || 'Playlists Mobile Sheets Data',
-      dataFolderId: saved?.dataFolderId || '',
+      dataFolderId: saved?.dataFolderId || PERMANENT_DATA_FOLDER_ID,
       exportFolderName: saved?.exportFolderName || 'Playlists Mobile Sheets Export',
-      exportFolderId: saved?.exportFolderId || '',
+      exportFolderId: saved?.exportFolderId || PERMANENT_EXPORT_FOLDER_ID,
       mssFileName: saved?.mssFileName || 'PEPETO_KOMPLET_SETLIST.mss',
       xlsxFileName: saved?.xlsxFileName || 'PEPETA_KOMPLET.xlsx',
     };

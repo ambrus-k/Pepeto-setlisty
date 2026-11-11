@@ -9,9 +9,13 @@ import { Header } from './components/Header';
 import { SetTabs } from './components/SetTabs';
 import { ActiveSetColumn } from './components/ActiveSetColumn';
 import { LibraryColumn } from './components/LibraryColumn';
-import { ExportModal } from './components/ExportModal';
+import { ExportModal, ExportProgressState } from './components/ExportModal';
 import { AdminPanelModal } from './components/AdminPanelModal';
 import { OfflineIndicator } from './components/OfflineIndicator';
+import { ToastProvider, useToast } from './components/Toast';
+import { ImportModal } from './components/ImportModal';
+import { ManualPairModal } from './components/ManualPairModal';
+import { importMssText, importXlsxBuffer, ImportResult } from './services/importSetlist';
 
 const DEFAULT_SETS: SetlistGroup[] = [
   { id: 'set-1', name: 'Set 1', songIds: [] },
@@ -20,9 +24,24 @@ const DEFAULT_SETS: SetlistGroup[] = [
   { id: 'set-zbytek', name: 'Zbytek', isFixed: true, songIds: [], color: '#cbd5e1' },
 ];
 
+const DEFAULT_EXPORT_PROGRESS: ExportProgressState = {
+  progress: 0,
+  stepId: 'init',
+  stepLabel: 'Připraveno',
+  steps: [
+    { id: 'prep', title: '1. Příprava dat listů a skladeb', desc: 'Kontrola pořadí, názvů a barevného kódování', status: 'pending' },
+    { id: 'pdf', title: '2. Generování PDF archu', desc: 'Renderování tabulek, fontů a saxofonových tagů', status: 'pending' },
+    { id: 'mss', title: '3. Tvorba MobileSheets XML', desc: 'Sestavení .mss struktury se SongId a názvy', status: 'pending' },
+    { id: 'drive_auth', title: '4. Spojení s Google Cloud', desc: 'Autorizace a lokalizace exportní složky kapely', status: 'pending' },
+    { id: 'drive_upload', title: '5. Synchronizace na Disk', desc: 'Zápis a uložení souborů na Google Disk', status: 'pending' },
+  ],
+  logs: [],
+};
+
 function SetlistStudio() {
   const isOnline = useOnlineStatus();
   const { role, logout } = useAuth();
+  const { showSuccess, showError, showWarning } = useToast();
 
   // App State - event name and setlist groups
   const [eventName, setEventName] = useState<string>('');
@@ -38,6 +57,9 @@ function SetlistStudio() {
   const [isAdminPanelOpen, setIsAdminPanelOpen] = useState<boolean>(false);
   const [isExportOpen, setIsExportOpen] = useState<boolean>(false);
   const [isExporting, setIsExporting] = useState<boolean>(false);
+  const [isImportModalOpen, setIsImportModalOpen] = useState<boolean>(false);
+  const [pairingSong, setPairingSong] = useState<Song | null>(null);
+  const [exportProgress, setExportProgress] = useState<ExportProgressState>(DEFAULT_EXPORT_PROGRESS);
 
   // Generated artifacts for Export Modal
   const [exportedPdfBlob, setExportedPdfBlob] = useState<Blob | null>(null);
@@ -308,35 +330,197 @@ function SetlistStudio() {
     );
   };
 
-  // Generator & Silent Backend Drive Export Execution
+  // 5. Import Handlers for .mss and .xlsx files
+  const handleApplyImport = async (result: ImportResult) => {
+    // A. Update Sets state
+    if (result.sets && result.sets.length > 0) {
+      setSets(result.sets);
+      setActiveSetId(result.sets[0].id);
+    }
+
+    // B. Update Event Name
+    if (result.eventName) {
+      setEventName(result.eventName);
+    }
+
+    // C. Add or update songs in state & storage (preserving saxophone notes from Excel)
+    if (result.newSongs && result.newSongs.length > 0) {
+      setSongs((prevSongs) => {
+        const songMap = new Map(prevSongs.map((s) => [s.id, s]));
+        for (const s of result.newSongs) {
+          songMap.set(s.id, s);
+        }
+        const updated = Array.from(songMap.values());
+        storage.saveSongs(updated).catch(console.error);
+        return updated;
+      });
+    }
+
+    // D. User Feedback Toast
+    if (result.unmatchedCount > 0) {
+      showWarning(
+        `Importováno ${result.sets.length} setů. ${result.matchedCount} skladeb napárováno, ${result.unmatchedCount} označeno v setu ke kontrole.`,
+        'Import dokončen s upozorněním'
+      );
+    } else {
+      showSuccess(
+        `Úspěšně importováno ${result.sets.length} setů s ${result.totalSongs} skladbami (100% napárováno)!`,
+        'Setlist byl načten'
+      );
+    }
+  };
+
+  const handleDirectFileImport = async (file: File) => {
+    try {
+      const fileName = file.name;
+      const lower = fileName.toLowerCase();
+
+      // Ensure library is available
+      let currentSongs = songs;
+      if (currentSongs.length === 0) {
+        const saved = await storage.getSongs();
+        if (saved && saved.length > 0) {
+          currentSongs = saved;
+          setSongs(saved);
+        }
+      }
+
+      let result: ImportResult;
+      if (lower.endsWith('.mss') || lower.endsWith('.xml')) {
+        const text = await file.text();
+        result = importMssText(text, currentSongs, fileName);
+      } else if (
+        lower.endsWith('.xlsx') ||
+        lower.endsWith('.xls') ||
+        file.type.includes('spreadsheet') ||
+        file.type.includes('excel')
+      ) {
+        const buffer = await file.arrayBuffer();
+        result = await importXlsxBuffer(buffer, currentSongs, fileName);
+      } else {
+        throw new Error('Nepodporovaný typ souboru. Zvolte soubor .mss (XML) nebo .xlsx (Excel).');
+      }
+
+      await handleApplyImport(result);
+    } catch (err: any) {
+      console.error('Direct file import error:', err);
+      showError(err.message || 'Nastala chyba při importu souboru.', 'Chyba importu');
+    }
+  };
+
+  // 6. Manual Song Pairing handler
+  const handlePairSong = (tempId: number, targetMasterId: number) => {
+    const targetSong = songs.find((s) => s.id === targetMasterId);
+
+    // Replace tempId with targetMasterId in all sets
+    setSets((prevSets) =>
+      prevSets.map((s) => ({
+        ...s,
+        songIds: s.songIds.map((id) => (id === tempId ? targetMasterId : id)),
+      }))
+    );
+
+    // Clean up temporary song from songs state if it was a negative ID
+    if (tempId < 0) {
+      setSongs((prev) => prev.filter((s) => s.id !== tempId));
+    }
+
+    showSuccess(
+      `Skladba byla úspěšně spárována s "${targetSong ? targetSong.pdf_title : `#${targetMasterId}`}".`,
+      'Spárováno'
+    );
+  };
+
+  // Generator & Silent Backend Drive Export Execution with Real-Time Background Progress
   const handleGenerateAndSave = async () => {
     setIsExporting(true);
-    setDriveExportStatus({ state: 'uploading' });
     setIsExportOpen(true);
+    setDriveExportStatus({ state: 'uploading' });
+
+    const formatTime = () => `[${new Date().toLocaleTimeString('cs-CZ')}]`;
+
+    const pushLog = (msg: string) => {
+      setExportProgress((prev) => ({
+        ...prev,
+        logs: [...prev.logs, `${formatTime()} ${msg}`],
+      }));
+    };
+
+    const updateStep = (
+      stepId: string,
+      status: 'in_progress' | 'done' | 'error',
+      progress: number,
+      label: string,
+      desc?: string
+    ) => {
+      setExportProgress((prev) => ({
+        ...prev,
+        progress,
+        stepId,
+        stepLabel: label,
+        steps: prev.steps.map((st) =>
+          st.id === stepId ? { ...st, status, desc: desc || st.desc } : st
+        ),
+      }));
+    };
+
+    const safeName = eventName.trim() || 'Setlist';
+    const pdfFileName = `${safeName}.pdf`;
+    const mssFileName = `${safeName}.mss`;
 
     try {
-      // 1. Generate PDF
+      // 0. Initialize & Reset progress
+      setExportProgress({
+        progress: 5,
+        stepId: 'prep',
+        stepLabel: 'Zahajuji proces exportu...',
+        steps: DEFAULT_EXPORT_PROGRESS.steps.map((s) => ({ ...s, status: 'pending' })),
+        logs: [`${formatTime()} Zahájeno generování exportních souborů pro: ${safeName}`],
+      });
+
+      // 1. Preparation of sets & songs
+      updateStep('prep', 'in_progress', 15, 'Příprava listů a ověřování skladeb...');
+      const activeSets = sets.filter((s) => s.songIds.length > 0);
+      pushLog(`Načteno ${activeSets.length} listů k exportu (celkem ${totalSetSongs} zařazených skladeb).`);
+      await new Promise((r) => setTimeout(r, 220));
+      updateStep('prep', 'done', 25, 'Data listů připravena');
+
+      // 2. Generate PDF Stage Sheet
+      updateStep('pdf', 'in_progress', 35, 'Generuji barevné PDF pro pódium...');
+      pushLog('Vykresluji tiskové stránky s českým fontem (CzechFont) a autentickými barvami...');
       const { blob: pdfBlob, dataUrl } = await generatePdf(eventName, sets, songsMap);
       setExportedPdfBlob(pdfBlob);
       setExportedPdfDataUrl(dataUrl);
+      pushLog(`✓ PDF arch vytvořen (${(pdfBlob.size / 1024).toFixed(1)} kB, A4 tabulkový formát).`);
+      updateStep('pdf', 'done', 55, 'PDF arch vygenerován');
+      await new Promise((r) => setTimeout(r, 200));
 
-      // 2. Generate MSS XML
+      // 3. Generate MobileSheets XML
+      updateStep('mss', 'in_progress', 65, 'Sestavuji MobileSheets XML strukturu...');
+      pushLog('Generuji uzly <Setlist> a <Song> pro aplikaci MobileSheets...');
       const mssXml = generateMssXml(eventName, sets, songsMap);
       setExportedMssXml(mssXml);
+      const mssSize = new Blob([mssXml]).size;
+      pushLog(`✓ XML kód (.mss) zkompilován (${(mssSize / 1024).toFixed(1)} kB, UTF-8).`);
+      updateStep('mss', 'done', 75, 'MobileSheets XML hotovo');
+      await new Promise((r) => setTimeout(r, 200));
 
-      const safeName = eventName.trim() || 'Setlist';
-      const pdfFileName = `${safeName}.pdf`;
-      const mssFileName = `${safeName}.mss`;
-
-      // 3. Silent Backend Google Drive Upload via /api/drive/export
+      // 4. Google Drive connection & upload
       if (isOnline) {
-        // Convert pdfBlob to base64
+        updateStep('drive_auth', 'in_progress', 82, 'Připojuji se ke Google Disku...');
+        pushLog('Ověřuji spojení se službou Google Drive API přes backend...');
+
+        // Convert PDF blob to base64
         const reader = new FileReader();
         const base64Promise = new Promise<string>((resolve) => {
           reader.onloadend = () => resolve(reader.result as string);
           reader.readAsDataURL(pdfBlob);
         });
         const pdfBase64 = await base64Promise;
+
+        updateStep('drive_auth', 'done', 88, 'Google Drive API připojeno');
+        updateStep('drive_upload', 'in_progress', 92, 'Ukládám soubory na Google Disk...');
+        pushLog(`Odesílám soubory "${mssFileName}" a "${pdfFileName}" do exportní složky...`);
 
         const res = await fetch('/api/drive/export', {
           method: 'POST',
@@ -351,16 +535,21 @@ function SetlistStudio() {
 
         if (res.ok) {
           const data = await res.json();
+          pushLog(`✓ Úspěšně nahráno a potvrzeno Google Cloudem (ID souboru: ${data.mssFileId || 'export_ok'}).`);
+          updateStep('drive_upload', 'done', 100, 'Uloženo na Google Disk');
           setDriveExportStatus({
             state: 'success',
-            message: data.message || `Setlist "${mssFileName}" byl tiše uložen do exportní složky na Google Disku!`,
+            message: data.message || `Setlist "${mssFileName}" byl úspěšně uložen do exportní složky na Google Disku!`,
           });
         } else {
           const errorData = await res.json().catch(() => ({}));
           throw new Error(errorData.error || 'Server vrátil chybu při exportu.');
         }
       } else {
-        // Offline queue in IndexedDB
+        updateStep('drive_auth', 'done', 88, 'Offline režim');
+        updateStep('drive_upload', 'done', 100, 'Uloženo do lokální paměti');
+        pushLog('Offline režim: Export zařazen do lokální IndexedDB fronty pro pozdější synchronizaci.');
+
         await storage.addPendingUpload({
           id: `upload-${Date.now()}-pdf`,
           eventName,
@@ -385,6 +574,8 @@ function SetlistStudio() {
       }
     } catch (err: any) {
       console.error('Export failed:', err);
+      pushLog(`❌ Chyba: ${err.message || 'Chyba při exportu'}`);
+      updateStep('drive_upload', 'error', 100, 'Chyba při exportu');
       setDriveExportStatus({
         state: 'error',
         message: err.message || 'Chyba při ukládání na Google Disk.',
@@ -425,6 +616,8 @@ function SetlistStudio() {
         onQuickDownloadPdf={handleQuickDownloadPdf}
         onQuickDownloadMss={handleQuickDownloadMss}
         isExporting={isExporting}
+        onDirectFileImport={handleDirectFileImport}
+        onOpenImportModal={() => setIsImportModalOpen(true)}
       />
 
       {/* Sync feedback notification banner if any */}
@@ -457,6 +650,7 @@ function SetlistStudio() {
             onMoveSongToSet={handleMoveSongToSet}
             onClearSet={handleClearSet}
             onReorderSong={handleReorderSong}
+            onOpenManualPair={setPairingSong}
           />
         </section>
 
@@ -494,7 +688,28 @@ function SetlistStudio() {
         pdfBlob={exportedPdfBlob}
         pdfDataUrl={exportedPdfDataUrl}
         mssXml={exportedMssXml}
+        sets={sets}
+        songsMap={songsMap}
+        isExporting={isExporting}
+        exportProgress={exportProgress}
         driveStatus={driveExportStatus}
+      />
+
+      {/* Import Setlist Modal */}
+      <ImportModal
+        isOpen={isImportModalOpen}
+        onClose={() => setIsImportModalOpen(false)}
+        masterSongs={songs}
+        onApplyImport={handleApplyImport}
+      />
+
+      {/* Manual Song Pairing Modal */}
+      <ManualPairModal
+        isOpen={pairingSong !== null}
+        onClose={() => setPairingSong(null)}
+        unmatchedSong={pairingSong}
+        masterSongs={songs}
+        onPairSong={handlePairSong}
       />
     </div>
   );
@@ -516,5 +731,9 @@ export default function App() {
     return <LoginScreen />;
   }
 
-  return <SetlistStudio />;
+  return (
+    <ToastProvider>
+      <SetlistStudio />
+    </ToastProvider>
+  );
 }

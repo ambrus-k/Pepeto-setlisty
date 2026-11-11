@@ -7,6 +7,10 @@ export interface Song {
   category?: string;
   artist?: string;
   note?: string;
+  isUnmatched?: boolean;
+  originalImportTitle?: string;
+  fileName?: string;
+  fileType?: number;
 }
 
 export interface SetlistGroup {

@@ -25,8 +25,10 @@ import {
   Trash2,
   MoveRight,
   GripVertical,
+  AlertTriangle,
 } from 'lucide-react';
 import { SetlistGroup, Song } from '../types';
+import { cleanTitleForPdf } from '../services/exportGenerator';
 
 interface ActiveSetColumnProps {
   activeSet: SetlistGroup;
@@ -38,6 +40,7 @@ interface ActiveSetColumnProps {
   onMoveSongToSet: (fromIndex: number, targetSetId: string) => void;
   onClearSet: () => void;
   onReorderSong: (dragIndex: number, hoverIndex: number) => void;
+  onOpenManualPair?: (song: Song) => void;
 }
 
 interface SortableRowProps {
@@ -52,6 +55,7 @@ interface SortableRowProps {
   onMoveSongDown: (index: number) => void;
   onRemoveSong: (index: number) => void;
   onMoveSongToSet: (fromIndex: number, targetSetId: string) => void;
+  onOpenManualPair?: (song: Song) => void;
 }
 
 const SortableSongRow: React.FC<SortableRowProps> = ({
@@ -66,6 +70,7 @@ const SortableSongRow: React.FC<SortableRowProps> = ({
   onMoveSongDown,
   onRemoveSong,
   onMoveSongToSet,
+  onOpenManualPair,
 }) => {
   const {
     attributes,
@@ -82,8 +87,11 @@ const SortableSongRow: React.FC<SortableRowProps> = ({
     touchAction: 'none', // Prevents scrolling while dragging with touch on tablets
   };
 
-  const title = song ? song.pdf_title : `Skladba #${songId}`;
-  const saxRegex = /(-?\s*(?:ALT|TENOR)\s*Sax\w*)/i;
+  const isUnmatched = Boolean(song?.isUnmatched || songId < 0);
+  const title = song
+    ? cleanTitleForPdf(song.pdf_title, song.id)
+    : (songId < 0 ? 'Neznámá skladba' : `Skladba #${songId}`);
+  const saxRegex = /(\s*[-–—]?\s*(?:ALT|TENOR|SOPR[AÁ]N|BARYTON)\s*Sax.*)/i;
 
   return (
     <div
@@ -92,6 +100,8 @@ const SortableSongRow: React.FC<SortableRowProps> = ({
       className={`group flex items-center gap-1.5 sm:gap-2 px-2.5 sm:px-3 py-1 transition-colors select-none ${
         isDragging
           ? 'opacity-70 scale-[1.01] bg-indigo-950/70 shadow-lg z-30 ring-1 ring-indigo-500 rounded'
+          : isUnmatched
+          ? 'bg-amber-950/20 hover:bg-amber-950/30'
           : 'hover:bg-slate-800/70'
       }`}
     >
@@ -110,17 +120,21 @@ const SortableSongRow: React.FC<SortableRowProps> = ({
         {index + 1}.
       </span>
 
-      {/* Main Song Pill with authentic colors from Excel */}
+      {/* Main Song Pill with authentic colors from Excel or warning highlight if unmatched */}
       <div
-        className="flex-1 min-w-0 rounded px-2.5 py-1 shadow-xs border border-black/15 flex items-center justify-between gap-2"
+        className={`flex-1 min-w-0 rounded px-2.5 py-1 shadow-xs flex items-center justify-between gap-2 transition ${
+          isUnmatched
+            ? 'border border-amber-500/80 ring-1 ring-amber-500/60 shadow-amber-950/30'
+            : 'border border-black/15'
+        }`}
         style={{
-          backgroundColor: song ? song.bgColor : '#ffffff',
-          color: song ? song.textColor : '#000000',
+          backgroundColor: isUnmatched ? '#fef3c7' : (song ? song.bgColor : '#ffffff'),
+          color: isUnmatched ? '#78350f' : (song ? song.textColor : '#000000'),
         }}
       >
         <div className="flex items-center gap-2 min-w-0">
           <span className="font-mono font-bold text-xs shrink-0 opacity-75">
-            #{song ? song.id : songId}
+            {songId < 0 ? '?' : `#${song ? song.id : songId}`}
           </span>
           <div className="font-bold text-xs sm:text-sm truncate tracking-tight">
             {!saxRegex.test(title) ? (
@@ -141,17 +155,43 @@ const SortableSongRow: React.FC<SortableRowProps> = ({
           </div>
         </div>
 
-        {song?.category && (
-          <span
-            className="text-[10px] uppercase font-bold tracking-wider px-1.5 py-0.5 rounded shrink-0 hidden md:inline"
-            style={{
-              backgroundColor: 'rgba(0,0,0,0.1)',
-              color: song ? song.textColor : '#000000',
-            }}
-          >
-            {song.category}
-          </span>
-        )}
+        <div className="flex items-center gap-1.5 shrink-0">
+          {/* Unmatched warning badge with pairing trigger */}
+          {isUnmatched && (
+            <button
+              type="button"
+              onClick={() =>
+                onOpenManualPair?.(
+                  song || {
+                    id: songId,
+                    pdf_title: title,
+                    mss_title: title,
+                    textColor: '#000000',
+                    bgColor: '#ffffff',
+                    isUnmatched: true,
+                  }
+                )
+              }
+              className="flex items-center gap-1 rounded bg-amber-600 hover:bg-amber-500 text-white font-bold text-[10px] px-2 py-0.5 shadow-sm transition active:scale-95 cursor-pointer"
+              title="Skladba nebyla 100% nalezena v databázi – klikněte pro ruční spárování"
+            >
+              <AlertTriangle className="w-3 h-3 text-amber-200" />
+              <span>Spárovat</span>
+            </button>
+          )}
+
+          {song?.category && !isUnmatched && (
+            <span
+              className="text-[10px] uppercase font-bold tracking-wider px-1.5 py-0.5 rounded shrink-0 hidden md:inline"
+              style={{
+                backgroundColor: 'rgba(0,0,0,0.1)',
+                color: song ? song.textColor : '#000000',
+              }}
+            >
+              {song.category}
+            </span>
+          )}
+        </div>
       </div>
 
       {/* Action controls */}
@@ -227,6 +267,7 @@ export const ActiveSetColumn: React.FC<ActiveSetColumnProps> = ({
   onMoveSongToSet,
   onClearSet,
   onReorderSong,
+  onOpenManualPair,
 }) => {
   const songCount = activeSet.songIds.length;
   const totalMinutes = Math.round(songCount * 3.75);
@@ -363,6 +404,7 @@ export const ActiveSetColumn: React.FC<ActiveSetColumnProps> = ({
                     onMoveSongDown={onMoveSongDown}
                     onRemoveSong={onRemoveSong}
                     onMoveSongToSet={onMoveSongToSet}
+                    onOpenManualPair={onOpenManualPair}
                   />
                 );
               })}
