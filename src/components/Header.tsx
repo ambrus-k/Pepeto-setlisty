@@ -70,10 +70,10 @@ export const Header: React.FC<HeaderProps> = ({
               <Music className="w-5 h-5" />
             </div>
 
-            <div className="flex-1 max-w-md">
+            <div className="flex-1 w-full max-w-2xl min-w-[260px]">
               <label
                 htmlFor="eventNameInput"
-                className="block text-[11px] font-semibold uppercase tracking-wider text-indigo-400 mb-0.5"
+                className="block text-xs font-semibold uppercase tracking-wider text-indigo-400 mb-1"
               >
                 Název akce / vystoupení
               </label>
@@ -83,7 +83,7 @@ export const Header: React.FC<HeaderProps> = ({
                 value={eventName}
                 onChange={(e) => onEventNameChange(e.target.value)}
                 placeholder="např. Oleško 22.08.2026..."
-                className="w-full rounded-lg bg-slate-800/90 border border-slate-700 px-3 py-1.5 text-sm font-semibold text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition"
+                className="w-full rounded-xl bg-slate-800/90 border border-slate-700 px-4 py-2.5 text-base sm:text-lg font-semibold text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition"
               />
             </div>
           </div>

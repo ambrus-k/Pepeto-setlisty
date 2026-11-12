@@ -308,7 +308,7 @@ export const ImportModal: React.FC<ImportModalProps> = ({
                   type="text"
                   value={editableEventName}
                   onChange={(e) => setEditableEventName(e.target.value)}
-                  className="w-full rounded-lg bg-slate-900 border border-slate-700 px-3 py-1.5 text-sm font-bold text-white focus:outline-none focus:ring-2 focus:ring-indigo-500 transition"
+                  className="w-full rounded-lg bg-slate-900 border border-slate-700 px-3.5 py-2.5 text-base font-bold text-white focus:outline-none focus:ring-2 focus:ring-indigo-500 transition"
                 />
               </div>
 
