@@ -11,7 +11,7 @@ type NextApiResponse = {
   setHeader: (name: string, value: string | string[]) => void;
 };
 
-import { testDriveConnection } from '../../src/services/googleDriveServer';
+import { testDriveConnection } from '../../src/services/googleDriveServer.ts';
 
 /**
  * Next.js API Route for Vercel: /api/drive/test

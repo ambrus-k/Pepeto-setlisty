@@ -1,5 +1,5 @@
 import localforage from 'localforage';
-import { Song, EventProject, PendingUpload } from '../types';
+import type { Song, EventProject, PendingUpload } from '../types/index.ts';
 
 // Configure localforage instance for MobileSheets Setlist Studio
 const store = localforage.createInstance({

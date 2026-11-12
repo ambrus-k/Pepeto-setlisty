@@ -1,7 +1,7 @@
 import type { jsPDF as JsPdfType } from 'jspdf';
 import * as jspdfModule from 'jspdf';
 import * as autoTableModule from 'jspdf-autotable';
-import { SetlistGroup, Song } from '../types';
+import type { SetlistGroup, Song } from '../types/index.ts';
 import { CZECH_FONT_BOLD_BASE64, CZECH_FONT_REGULAR_BASE64 } from './czechFontBase64';
 
 // Resilient class constructor resolution across Vite (browser ESM) and Node.js (tsx / CommonJS)

@@ -11,7 +11,7 @@ type NextApiResponse = {
   setHeader: (name: string, value: string | string[]) => void;
 };
 
-import { saveFolderSettings } from '../../src/services/googleDriveServer';
+import { saveFolderSettings } from '../../src/services/googleDriveServer.ts';
 
 /**
  * Next.js API Route for Vercel: /api/drive/folders

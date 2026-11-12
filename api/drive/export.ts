@@ -10,7 +10,7 @@ type NextApiResponse = {
   json: (data: any) => void;
   setHeader: (name: string, value: string | string[]) => void;
 };
-import { exportToGoogleDrive } from '../../src/services/googleDriveServer';
+import { exportToGoogleDrive } from '../../src/services/googleDriveServer.ts';
 
 /**
  * Next.js API Route: /api/drive/export

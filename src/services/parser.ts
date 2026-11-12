@@ -1,7 +1,7 @@
 import * as XLSX from 'xlsx';
 import { DOMParser as XmlDomParser } from '@xmldom/xmldom';
-import { Song } from '../types';
-import { parseExcelAllStyles, CellStyleInfo } from './excelStyleParser';
+import type { Song } from '../types/index.ts';
+import { parseExcelAllStyles, type CellStyleInfo } from './excelStyleParser.ts';
 
 interface ParsedMssItem {
   id: number;

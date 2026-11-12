@@ -11,7 +11,7 @@ type NextApiResponse = {
   json: (data: any) => void;
   setHeader: (name: string, value: string | string[]) => void;
 };
-import { syncMasterSongsFromDrive } from '../../src/services/googleDriveServer';
+import { syncMasterSongsFromDrive } from '../../src/services/googleDriveServer.ts';
 
 /**
  * Next.js API Route: /api/drive/sync

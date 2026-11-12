@@ -1,5 +1,5 @@
 import * as XLSX from 'xlsx';
-import { Song, SetlistGroup } from '../types';
+import type { Song, SetlistGroup } from '../types/index.ts';
 import {
   cleanSongTitle,
   calculateTitleSimilarity,

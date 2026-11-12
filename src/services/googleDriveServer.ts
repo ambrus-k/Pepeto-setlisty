@@ -23,8 +23,8 @@ import { JWT, OAuth2Client } from 'google-auth-library';
 import ExcelJS from 'exceljs';
 import fs from 'fs';
 import path from 'path';
-import { Song, AdminLogEntry, ServerDriveStatus } from '../types';
-import { parseMssXml, parseXlsx, pairMssAndXlsx } from './parser';
+import type { Song, AdminLogEntry, ServerDriveStatus } from '../types/index.ts';
+import { parseMssXml, parseXlsx, pairMssAndXlsx } from './parser.ts';
 
 // In-memory admin logs (last 50 events)
 const adminLogs: AdminLogEntry[] = [
