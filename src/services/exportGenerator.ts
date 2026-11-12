@@ -194,7 +194,7 @@ export async function generatePdf(
 
   const pageWidth = doc.internal.pageSize.getWidth();
   const pageHeight = doc.internal.pageSize.getHeight();
-  const safeProjectName = projectName.trim() || 'Oleško 22.08.2026';
+  const safeProjectName = projectName.trim() || 'Setlist';
 
   // Registrace Unicode fontů s kompletní podporou české diakritiky
   doc.addFileToVFS('CzechFont-Bold.ttf', CZECH_FONT_BOLD_BASE64);

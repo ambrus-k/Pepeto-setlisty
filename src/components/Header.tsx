@@ -62,34 +62,26 @@ export const Header: React.FC<HeaderProps> = ({
 
   return (
     <header className="sticky top-0 z-30 bg-slate-900/95 backdrop-blur-md border-b border-slate-800 shadow-lg">
-      <div className="max-w-7xl mx-auto px-4 py-3 sm:px-6">
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
-          {/* Logo & Event Name input */}
-          <div className="flex flex-1 items-center gap-3">
+      <div className="max-w-7xl mx-auto px-4 py-3 sm:px-6 space-y-3">
+        {/* Top Row: Brand & Action Controls */}
+        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3">
+          {/* Logo & App Title */}
+          <div className="flex items-center gap-3 shrink-0">
             <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-indigo-500 via-indigo-600 to-violet-700 text-white shadow-md shadow-indigo-500/20">
               <Music className="w-5 h-5" />
             </div>
-
-            <div className="flex-1 w-full max-w-2xl min-w-[260px]">
-              <label
-                htmlFor="eventNameInput"
-                className="block text-xs font-semibold uppercase tracking-wider text-indigo-400 mb-1"
-              >
-                Název akce / vystoupení
-              </label>
-              <input
-                id="eventNameInput"
-                type="text"
-                value={eventName}
-                onChange={(e) => onEventNameChange(e.target.value)}
-                placeholder="např. Oleško 22.08.2026..."
-                className="w-full rounded-xl bg-slate-800/90 border border-slate-700 px-4 py-2.5 text-base sm:text-lg font-semibold text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition"
-              />
+            <div>
+              <div className="text-sm sm:text-base font-bold text-white tracking-tight leading-tight">
+                MobileSheets Setlist Studio
+              </div>
+              <div className="text-[11px] text-slate-400 leading-tight">
+                Správa a tvorba setlistů
+              </div>
             </div>
           </div>
 
           {/* Right Controls */}
-          <div className="flex flex-wrap items-center gap-2 sm:gap-3 justify-end">
+          <div className="flex flex-wrap items-center gap-2 sm:gap-2.5 lg:justify-end">
             {/* Hidden file input for .mss and .xlsx as specified in requirement 1 */}
             <input
               ref={fileInputRef}
@@ -199,6 +191,26 @@ export const Header: React.FC<HeaderProps> = ({
               <CloudUpload className="w-4 h-4" />
               <span>{isExporting ? 'Ukládám na Disk...' : 'Export MSS na Disk'}</span>
             </button>
+          </div>
+        </div>
+
+        {/* Second Row: Full-width Event / Setlist Name Input */}
+        <div className="pt-2 border-t border-slate-800/80">
+          <div className="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-4">
+            <label
+              htmlFor="eventNameInput"
+              className="text-xs font-semibold uppercase tracking-wider text-indigo-400 shrink-0"
+            >
+              Název setlistu / akce
+            </label>
+            <input
+              id="eventNameInput"
+              type="text"
+              value={eventName}
+              onChange={(e) => onEventNameChange(e.target.value)}
+              placeholder="Zadejte název setlistu nebo vystoupení..."
+              className="w-full rounded-xl bg-slate-800/90 border border-slate-700 px-4 py-2.5 text-base sm:text-lg font-semibold text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition"
+            />
           </div>
         </div>
       </div>
