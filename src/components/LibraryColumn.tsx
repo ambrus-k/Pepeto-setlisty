@@ -1,5 +1,5 @@
 import React, { useState, useMemo } from 'react';
-import { Search, X, Plus, Check, Filter, HardDrive } from 'lucide-react';
+import { Search, X, Plus, Check, Filter, HardDrive, HelpCircle } from 'lucide-react';
 import { Song, SetlistGroup } from '../types';
 import { cleanTitleForPdf } from '../services/exportGenerator';
 
@@ -8,6 +8,7 @@ interface LibraryColumnProps {
   activeSet: SetlistGroup;
   allSets: SetlistGroup[];
   onAddSongToActiveSet: (song: Song) => void;
+  onInspectSong: (song: Song) => void;
   onSyncDatabase?: () => void;
 }
 
@@ -47,6 +48,7 @@ export const LibraryColumn: React.FC<LibraryColumnProps> = ({
   activeSet,
   allSets,
   onAddSongToActiveSet,
+  onInspectSong,
   onSyncDatabase,
 }) => {
   const [searchQuery, setSearchQuery] = useState('');
@@ -102,8 +104,27 @@ export const LibraryColumn: React.FC<LibraryColumnProps> = ({
       const mssMatch = song.mss_title.toLowerCase().includes(q);
       const idMatch = String(song.id).includes(q);
       const catMatch = song.category?.toLowerCase().includes(q) || false;
+      const artistMatch = song.artist?.toLowerCase().includes(q) || false;
+      const singerMatch = song.pepeto?.singer?.toLowerCase().includes(q) || false;
+      const saxMatch = song.pepeto?.sax?.toLowerCase().includes(q) || false;
+      const tempoMatch = song.tempoCategory?.toLowerCase().includes(q) || false;
+      const genreMatch = song.genres?.some((g) => g.toLowerCase().includes(q)) || false;
+      const moodMatch = song.mood?.some((m) => m.toLowerCase().includes(q)) || false;
+      const danceMatch = song.danceStyles?.some((d) => d.toLowerCase().includes(q)) || false;
 
-      return titleMatch || mssMatch || idMatch || catMatch;
+      return (
+        titleMatch ||
+        mssMatch ||
+        idMatch ||
+        catMatch ||
+        artistMatch ||
+        singerMatch ||
+        saxMatch ||
+        tempoMatch ||
+        genreMatch ||
+        moodMatch ||
+        danceMatch
+      );
     });
   }, [songs, searchQuery, selectedCategory, filterUnassigned, assignedSongIds]);
 
@@ -267,8 +288,28 @@ export const LibraryColumn: React.FC<LibraryColumnProps> = ({
                     </span>
                   ) : null}
 
+                  {/* Compact Song Detail (?) Button */}
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      e.preventDefault();
+                      onInspectSong(song);
+                    }}
+                    className="w-6 h-6 rounded bg-slate-800/90 hover:bg-slate-700 border border-slate-600/80 text-slate-200 flex items-center justify-center transition shadow-xs hover:scale-105"
+                    title="Zobrazit detail a metadata skladby"
+                    aria-label={`Zobrazit detail skladby ${song.pdf_title}`}
+                  >
+                    <HelpCircle className="w-3.5 h-3.5" />
+                  </button>
+
                   {/* Compact Quick Add Button */}
                   <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onAddSongToActiveSet(song);
+                    }}
                     className="w-6 h-6 rounded bg-indigo-600/70 group-hover:bg-indigo-600 text-white flex items-center justify-center transition shadow-xs group-hover:scale-105"
                     title={`Přidat do ${activeSet.name}`}
                   >

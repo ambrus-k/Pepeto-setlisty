@@ -1,3 +1,23 @@
+export interface PepetoSongMeta {
+  singer?: string | null;
+  bgColor?: string | null;
+  isCommonlyPlayed?: boolean;
+  sax?: string | null;
+  inRemovalList?: boolean;
+  roudniceSet?: string | null;
+}
+
+export interface PepetoSongLabelsCs {
+  tempo?: string | null;
+  danceability?: string | null;
+}
+
+export interface PepetoSingerLegendItem {
+  bgColor: string;
+  singer: string;
+  description: string;
+}
+
 export interface Song {
   id: number;
   mss_title: string;
@@ -11,6 +31,43 @@ export interface Song {
   originalImportTitle?: string;
   fileName?: string;
   fileType?: number;
+
+  // Extended metadata from pepeto-songs-app-db.json
+  order?: number;
+  mss_songId?: number | null;
+  catalogNumber?: number | null;
+  mss_fileName?: string | null;
+  cleanTitle?: string | null;
+  xlsx_title?: string | null;
+  isPlayableSong?: boolean;
+  originalArtist?: string | null;
+  year?: number | null;
+  language?: string | null;
+  songType?: string | null;
+  genres?: string[];
+  tempoCategory?: string | null;
+  bpm?: number | null;
+  timeSignature?: string | null;
+  energy?: number | null;
+  danceability?: string | null;
+  danceStyles?: string[];
+  mood?: string[];
+  vocalType?: string | null;
+  setlistRoles?: string[];
+  audienceAppeal?: string | null;
+  aiDescription?: string | null;
+  verifiedSource?: string | null;
+  pepeto?: PepetoSongMeta;
+  labelsCs?: PepetoSongLabelsCs;
+}
+
+export interface PepetoSongDatabase {
+  schemaVersion: string;
+  databaseName: string;
+  generatedAt: string;
+  singerLegend?: PepetoSingerLegendItem[];
+  stats?: Record<string, any>;
+  songs: Song[];
 }
 
 export interface SetlistGroup {
