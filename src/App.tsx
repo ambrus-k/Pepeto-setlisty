@@ -622,12 +622,6 @@ function SetlistStudio() {
         onEventNameChange={setEventName}
         role={role || 'user'}
         onLogout={logout}
-        isOnline={isOnline}
-        totalMasterSongs={songs.length}
-        totalSetSongs={totalSetSongs}
-        onOpenAdminPanel={() => setIsAdminPanelOpen(true)}
-        onSyncDatabase={() => handleSyncDatabase(false)}
-        isSyncing={isSyncing}
         onGenerateAndSave={handleGenerateAndSave}
         onQuickDownloadPdf={handleQuickDownloadPdf}
         onQuickDownloadMss={handleQuickDownloadMss}
@@ -656,7 +650,7 @@ function SetlistStudio() {
       {/* 3. Main Two-Column Layout */}
       <main className="flex-1 max-w-7xl w-full mx-auto p-3 sm:p-4 grid grid-cols-1 lg:grid-cols-12 gap-3.5 sm:gap-4 overflow-hidden">
         {/* LEVÝ SLOUPEC: Aktivní Set */}
-        <section className="lg:col-span-6 flex flex-col h-[calc(100vh-9.5rem)] min-h-[28rem]">
+        <section className="lg:col-span-6 flex flex-col h-[calc(100vh-8rem)] min-h-[28rem]">
           <ActiveSetColumn
             activeSet={activeSet}
             songsMap={songsMap}
@@ -672,7 +666,7 @@ function SetlistStudio() {
         </section>
 
         {/* PRAVÝ SLOUPEC: Knihovna skladeb */}
-        <section className="lg:col-span-6 flex flex-col h-[calc(100vh-9.5rem)] min-h-[28rem]">
+        <section className="lg:col-span-6 flex flex-col h-[calc(100vh-8rem)] min-h-[28rem]">
           <LibraryColumn
             songs={songs}
             activeSet={activeSet}
@@ -734,6 +728,11 @@ function SetlistStudio() {
       <DisplaySettingsModal
         isOpen={isDisplaySettingsOpen}
         onClose={() => setIsDisplaySettingsOpen(false)}
+        role={role || 'user'}
+        totalMasterSongs={songs.length}
+        isSyncing={isSyncing}
+        onSyncDatabase={() => handleSyncDatabase(false)}
+        onOpenAdminPanel={() => setIsAdminPanelOpen(true)}
       />
 
       {/* Song Detail (?) Modal */}

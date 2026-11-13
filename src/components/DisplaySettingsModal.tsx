@@ -1,18 +1,29 @@
 import React, { useEffect } from 'react';
-import { Settings, Sun, Moon, Type, RotateCcw, X, Check } from 'lucide-react';
+import { Settings, Sun, Moon, Type, RotateCcw, X, Check, RefreshCw, ShieldCheck, Database } from 'lucide-react';
 import {
   useDisplaySettings,
   FONT_SCALE_OPTIONS,
 } from '../context/DisplaySettingsContext';
+import { UserRole } from '../types';
 
 interface DisplaySettingsModalProps {
   isOpen: boolean;
   onClose: () => void;
+  role?: UserRole;
+  totalMasterSongs?: number;
+  isSyncing?: boolean;
+  onSyncDatabase?: () => void;
+  onOpenAdminPanel?: () => void;
 }
 
 export const DisplaySettingsModal: React.FC<DisplaySettingsModalProps> = ({
   isOpen,
   onClose,
+  role,
+  totalMasterSongs,
+  isSyncing,
+  onSyncDatabase,
+  onOpenAdminPanel,
 }) => {
   const { theme, fontScale, setTheme, setFontScale, resetSettings } = useDisplaySettings();
 
@@ -51,10 +62,10 @@ export const DisplaySettingsModal: React.FC<DisplaySettingsModalProps> = ({
             </div>
             <div>
               <h2 id="display-settings-title" className="text-base font-bold text-slate-900 dark:text-white leading-tight">
-                Nastavení zobrazení
+                Nastavení
               </h2>
               <p className="text-xs text-slate-500 dark:text-slate-400">
-                Velikost písma, rozhraní a barevný režim
+                Databáze, správa, zobrazení a barevný režim
               </p>
             </div>
           </div>
@@ -69,7 +80,45 @@ export const DisplaySettingsModal: React.FC<DisplaySettingsModalProps> = ({
         </div>
 
         {/* Body */}
-        <div className="p-5 space-y-6">
+        <div className="p-5 space-y-5 max-h-[75vh] overflow-y-auto">
+          {/* Database & Admin Section (only when logged in) */}
+          {onSyncDatabase && (
+            <div>
+              <div className="flex items-center gap-2 mb-2.5">
+                <Database className="w-4 h-4 text-indigo-500 dark:text-indigo-400" />
+                <span className="text-xs font-bold uppercase tracking-wider text-slate-600 dark:text-slate-300">
+                  Databáze &amp; Správa
+                </span>
+              </div>
+
+              <div className={`grid gap-2.5 ${role === 'admin' && onOpenAdminPanel ? 'grid-cols-1 sm:grid-cols-2' : 'grid-cols-1'}`}>
+                <button
+                  type="button"
+                  onClick={onSyncDatabase}
+                  disabled={isSyncing}
+                  className="flex items-center justify-center gap-2 rounded-xl border border-slate-300 dark:border-slate-700 bg-slate-100 dark:bg-slate-800/80 hover:bg-slate-200 dark:hover:bg-slate-700/80 px-3.5 py-2.5 text-xs sm:text-sm font-semibold text-slate-800 dark:text-slate-200 transition shadow-sm disabled:opacity-50 cursor-pointer"
+                >
+                  <RefreshCw className={`w-4 h-4 text-indigo-600 dark:text-indigo-400 ${isSyncing ? 'animate-spin' : ''}`} />
+                  <span>Načíst databázi ({totalMasterSongs ?? 0})</span>
+                </button>
+
+                {role === 'admin' && onOpenAdminPanel && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      onClose();
+                      onOpenAdminPanel();
+                    }}
+                    className="flex items-center justify-center gap-2 rounded-xl border border-amber-400/60 dark:border-amber-500/40 bg-amber-50 dark:bg-amber-950/40 hover:bg-amber-100 dark:hover:bg-amber-900/50 px-3.5 py-2.5 text-xs sm:text-sm font-bold text-amber-800 dark:text-amber-300 transition shadow-sm cursor-pointer"
+                  >
+                    <ShieldCheck className="w-4 h-4 text-amber-600 dark:text-amber-400" />
+                    <span>Admin &amp; Logy</span>
+                  </button>
+                )}
+              </div>
+            </div>
+          )}
+
           {/* Theme Mode Section */}
           <div>
             <div className="flex items-center gap-2 mb-2.5">

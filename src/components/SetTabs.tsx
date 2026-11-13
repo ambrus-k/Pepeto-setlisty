@@ -22,7 +22,7 @@ export const SetTabs: React.FC<SetTabsProps> = ({
   const fixedSets = sets.filter((s) => s.isFixed);
 
   return (
-    <div className="bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 px-3 py-1.5 sm:px-4 transition-colors">
+    <div className="bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 px-3 py-1 sm:px-4 transition-colors">
       <div className="max-w-7xl mx-auto flex flex-wrap items-center gap-1 sm:gap-1.5">
         {/* Dynamic sets: List 1, List 2, List 3... */}
         {dynamicSets.map((set) => {
