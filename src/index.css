@@ -1,6 +1,20 @@
 @import "tailwindcss";
 @custom-variant dark (&:where(.dark, .dark *));
 
+@theme {
+  --color-slate-50: #f8f6fa;
+  --color-slate-100: #f2eff6;
+  --color-slate-200: #e4dfea;
+  --color-slate-300: #cdc5d6;
+  --color-slate-400: #a89db3;
+  --color-slate-500: #887c94;
+  --color-slate-600: #6b6077;
+  --color-slate-700: #52495c;
+  --color-slate-800: #3f3847;
+  --color-slate-900: #26212c;
+  --color-slate-950: #1c1821;
+}
+
 @keyframes shake {
   0%, 100% { transform: translateX(0); }
   20%, 60% { transform: translateX(-8px); }

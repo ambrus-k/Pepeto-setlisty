@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Music, Lock, Delete, ArrowRight, AlertCircle, Settings } from 'lucide-react';
+import { Lock, Delete, ArrowRight, AlertCircle, Settings } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { DisplaySettingsModal } from './DisplaySettingsModal';
 
@@ -98,13 +98,26 @@ export const LoginScreen: React.FC = () => {
 
       <div className="relative w-full max-w-md bg-white/95 dark:bg-slate-900/90 backdrop-blur-xl border border-slate-200 dark:border-slate-800 rounded-3xl p-6 sm:p-8 shadow-xl dark:shadow-2xl flex flex-col items-center">
         {/* App Logo */}
-        <div className="w-16 h-16 rounded-2xl bg-gradient-to-tr from-indigo-600 via-indigo-500 to-violet-600 flex items-center justify-center text-white shadow-xl shadow-indigo-600/30 mb-4 ring-1 ring-white/10">
-          <Music className="w-8 h-8" />
+        <div className="w-16 h-16 rounded-2xl bg-[#3f3847] flex items-center justify-center shadow-xl shadow-[#3f3847]/40 mb-3 ring-1 ring-white/15 p-2.5">
+          <img
+            src="/pepeto-p-icon.png"
+            alt="Pepeto P"
+            className="w-full h-full object-contain"
+          />
         </div>
 
-        <h1 className="text-xl sm:text-2xl font-black tracking-tight text-slate-900 dark:text-white text-center">
-          MobileSheets Setlist Studio
-        </h1>
+        <div className="flex items-center justify-center gap-2.5 mb-1">
+          <div className="rounded-lg bg-[#3f3847] px-2.5 py-1 border border-white/10 shadow-sm">
+            <img
+              src="/pepeto-logo.png"
+              alt="PEPETO hudební skupina"
+              className="h-6 w-auto object-contain"
+            />
+          </div>
+          <h1 className="text-xl sm:text-2xl font-black tracking-tight text-slate-900 dark:text-white">
+            Pepeto Setlisty
+          </h1>
+        </div>
         <p className="text-xs text-slate-500 dark:text-slate-400 text-center mt-1 mb-6">
           Zadejte přístupový PIN kód
         </p>

@@ -1,6 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
 import {
-  Music,
   CloudUpload,
   FileText,
   Code2,
@@ -78,13 +77,17 @@ export const Header: React.FC<HeaderProps> = ({
         {/* Top Row: Brand & Compact Action Controls */}
         <div className="flex items-center justify-between gap-2">
           {/* Logo & App Title */}
-          <div className="flex items-center gap-2 min-w-0">
-            <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br from-indigo-500 via-indigo-600 to-violet-700 text-white shadow-sm shadow-indigo-500/20">
-              <Music className="w-4 h-4" />
+          <div className="flex items-center gap-2.5 min-w-0">
+            <div className="flex h-8 shrink-0 items-center justify-center rounded-lg bg-[#3f3847] px-2 py-1 shadow-sm border border-white/10">
+              <img
+                src="/pepeto-logo.png"
+                alt="PEPETO hudební skupina"
+                className="h-6 w-auto object-contain"
+              />
             </div>
             <div className="min-w-0">
-              <div className="text-sm font-bold text-slate-900 dark:text-white tracking-tight leading-tight truncate">
-                MobileSheets Setlist Studio
+              <div className="text-sm sm:text-base font-bold text-slate-900 dark:text-white tracking-tight leading-tight truncate">
+                Pepeto Setlisty
               </div>
             </div>
           </div>
