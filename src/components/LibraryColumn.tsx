@@ -129,15 +129,15 @@ export const LibraryColumn: React.FC<LibraryColumnProps> = ({
   }, [songs, searchQuery, selectedCategory, filterUnassigned, assignedSongIds]);
 
   return (
-    <div className="flex flex-col h-full bg-slate-900 rounded-2xl border border-slate-800 shadow-xl overflow-hidden">
+    <div className="flex flex-col h-full bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm dark:shadow-xl overflow-hidden transition-colors">
       {/* Header & Search */}
-      <div className="p-4 bg-slate-900/90 border-b border-slate-800 space-y-3">
+      <div className="p-4 bg-slate-50/90 dark:bg-slate-900/90 border-b border-slate-200 dark:border-slate-800 space-y-3">
         <div className="flex items-center justify-between gap-2">
           <div className="flex items-center gap-2">
-            <h2 className="text-base sm:text-lg font-bold text-white flex items-center gap-2">
+            <h2 className="text-base sm:text-lg font-bold text-slate-900 dark:text-white flex items-center gap-2">
               <span>Knihovna skladeb</span>
             </h2>
-            <span className="rounded-lg bg-slate-800 border border-slate-700 text-slate-300 font-bold text-xs px-2 py-0.5">
+            <span className="rounded-lg bg-slate-100 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 text-slate-700 dark:text-slate-300 font-bold text-xs px-2 py-0.5">
               {filteredSongs.length} / {songs.length}
             </span>
           </div>
@@ -145,10 +145,10 @@ export const LibraryColumn: React.FC<LibraryColumnProps> = ({
           <div className="flex items-center gap-1.5">
             <button
               onClick={() => setFilterUnassigned(!filterUnassigned)}
-              className={`rounded-lg px-2.5 py-1 text-xs font-medium transition flex items-center gap-1 ${
+              className={`rounded-lg px-2.5 py-1 text-xs font-medium transition flex items-center gap-1 cursor-pointer ${
                 filterUnassigned
-                  ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40'
-                  : 'bg-slate-800/80 text-slate-400 border border-slate-700 hover:text-slate-200'
+                  ? 'bg-amber-100 dark:bg-amber-500/20 text-amber-800 dark:text-amber-300 border border-amber-300 dark:border-amber-500/40'
+                  : 'bg-slate-100 dark:bg-slate-800/80 text-slate-600 dark:text-slate-400 border border-slate-300 dark:border-slate-700 hover:text-slate-900 dark:hover:text-slate-200'
               }`}
               title="Zobrazit pouze skladby, které zatím nejsou v žádném setu"
             >
@@ -166,12 +166,12 @@ export const LibraryColumn: React.FC<LibraryColumnProps> = ({
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             placeholder="Hledat skladbu, tóninu, nástroj, ID..."
-            className="w-full pl-9 pr-9 py-2 rounded-xl bg-slate-800/90 border border-slate-700 text-sm font-medium text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition"
+            className="w-full pl-9 pr-9 py-2 rounded-xl bg-white dark:bg-slate-800/90 border border-slate-300 dark:border-slate-700 text-sm font-medium text-slate-900 dark:text-white placeholder-slate-400 dark:placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition"
           />
           {searchQuery && (
             <button
               onClick={() => setSearchQuery('')}
-              className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white"
+              className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-700 dark:hover:text-white"
             >
               <X className="w-4 h-4" />
             </button>
@@ -183,10 +183,10 @@ export const LibraryColumn: React.FC<LibraryColumnProps> = ({
           <div className="flex items-center gap-1.5 overflow-x-auto pb-1 no-scrollbar text-xs">
             <button
               onClick={() => setSelectedCategory('all')}
-              className={`rounded-lg px-2.5 py-1 text-xs font-semibold shrink-0 transition ${
+              className={`rounded-lg px-2.5 py-1 text-xs font-semibold shrink-0 transition cursor-pointer ${
                 selectedCategory === 'all'
                   ? 'bg-indigo-600 text-white'
-                  : 'bg-slate-800 text-slate-400 hover:bg-slate-700 hover:text-slate-200'
+                  : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-700 hover:text-slate-900 dark:hover:text-slate-200'
               }`}
             >
               Vše ({songs.length})
@@ -195,10 +195,10 @@ export const LibraryColumn: React.FC<LibraryColumnProps> = ({
               <button
                 key={cat}
                 onClick={() => setSelectedCategory(cat)}
-                className={`rounded-lg px-2.5 py-1 text-xs font-semibold shrink-0 transition ${
+                className={`rounded-lg px-2.5 py-1 text-xs font-semibold shrink-0 transition cursor-pointer ${
                   selectedCategory === cat
                     ? 'bg-indigo-600 text-white'
-                    : 'bg-slate-800 text-slate-400 hover:bg-slate-700 hover:text-slate-200'
+                    : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-700 hover:text-slate-900 dark:hover:text-slate-200'
                 }`}
               >
                 {cat}
@@ -209,12 +209,12 @@ export const LibraryColumn: React.FC<LibraryColumnProps> = ({
       </div>
 
       {/* Song List - High Density with Hairline Dividers */}
-      <div className="flex-1 overflow-y-auto divide-y divide-slate-800/80 bg-slate-900/50">
+      <div className="flex-1 overflow-y-auto divide-y divide-slate-200/80 dark:divide-slate-800/80 bg-white dark:bg-slate-900/50">
         {songs.length === 0 ? (
-          <div className="flex flex-col items-center justify-center h-72 text-center p-6 text-slate-400">
-            <HardDrive className="w-10 h-10 text-indigo-400 mb-3" />
-            <p className="text-base font-bold text-white">Knihovna je zatím prázdná</p>
-            <p className="text-xs text-slate-400 max-w-sm mt-1 mb-4">
+          <div className="flex flex-col items-center justify-center h-72 text-center p-6 text-slate-500 dark:text-slate-400">
+            <HardDrive className="w-10 h-10 text-indigo-500 dark:text-indigo-400 mb-3" />
+            <p className="text-base font-bold text-slate-900 dark:text-white">Knihovna je zatím prázdná</p>
+            <p className="text-xs text-slate-500 dark:text-slate-400 max-w-sm mt-1 mb-4">
               Načtěte repertoár kapely z centrální Google Drive databáze (soubory PEPETO_KOMPLET_SETLIST.mss a PEPETA_KOMPLET.xlsx).
             </p>
             {onSyncDatabase && (
@@ -240,8 +240,8 @@ export const LibraryColumn: React.FC<LibraryColumnProps> = ({
               <div
                 key={song.id}
                 onClick={() => onAddSongToActiveSet(song)}
-                className={`group flex items-center justify-between gap-2 px-2.5 sm:px-3 py-1 cursor-pointer transition select-none hover:bg-slate-800/80 active:bg-slate-800 ${
-                  inActiveSet ? 'bg-indigo-950/20' : ''
+                className={`group flex items-center justify-between gap-2 px-2.5 sm:px-3 py-1 cursor-pointer transition select-none hover:bg-slate-100 dark:hover:bg-slate-800/80 active:bg-slate-200 dark:active:bg-slate-800 ${
+                  inActiveSet ? 'bg-indigo-50/70 dark:bg-indigo-950/20' : ''
                 }`}
                 title="Kliknutím přidat do aktivního setu"
               >
@@ -264,7 +264,7 @@ export const LibraryColumn: React.FC<LibraryColumnProps> = ({
 
                   {song.category && (
                     <span
-                      className="text-[10px] uppercase font-bold tracking-wider px-1.5 py-0.5 rounded shrink-0 hidden md:inline"
+                      className="text-[0.625rem] uppercase font-bold tracking-wider px-1.5 py-0.5 rounded shrink-0 hidden md:inline"
                       style={{
                         backgroundColor: 'rgba(0,0,0,0.1)',
                         color: song.textColor || '#000000',
@@ -278,12 +278,12 @@ export const LibraryColumn: React.FC<LibraryColumnProps> = ({
                 {/* Status Badge & Quick Add button */}
                 <div className="flex items-center gap-1.5 shrink-0">
                   {inActiveSet ? (
-                    <span className="flex items-center gap-1 rounded bg-indigo-950/90 border border-indigo-700/80 text-indigo-300 text-[10px] font-bold px-1.5 py-0.5">
-                      <Check className="w-3 h-3 text-indigo-400" />
+                    <span className="flex items-center gap-1 rounded bg-indigo-100 dark:bg-indigo-950/90 border border-indigo-300 dark:border-indigo-700/80 text-indigo-700 dark:text-indigo-300 text-[0.625rem] font-bold px-1.5 py-0.5">
+                      <Check className="w-3 h-3 text-indigo-600 dark:text-indigo-400" />
                       <span className="hidden sm:inline">V setu</span>
                     </span>
                   ) : assignedInSetName ? (
-                    <span className="rounded bg-slate-800/90 border border-slate-700 text-slate-400 text-[10px] font-medium px-1.5 py-0.5">
+                    <span className="rounded bg-slate-100 dark:bg-slate-800/90 border border-slate-300 dark:border-slate-700 text-slate-600 dark:text-slate-400 text-[0.625rem] font-medium px-1.5 py-0.5">
                       {assignedInSetName}
                     </span>
                   ) : null}
@@ -296,7 +296,7 @@ export const LibraryColumn: React.FC<LibraryColumnProps> = ({
                       e.preventDefault();
                       onInspectSong(song);
                     }}
-                    className="w-6 h-6 rounded bg-slate-800/90 hover:bg-slate-700 border border-slate-600/80 text-slate-200 flex items-center justify-center transition shadow-xs hover:scale-105"
+                    className="w-6 h-6 rounded bg-slate-100 dark:bg-slate-800/90 hover:bg-slate-200 dark:hover:bg-slate-700 border border-slate-300 dark:border-slate-600/80 text-slate-600 dark:text-slate-200 flex items-center justify-center transition shadow-xs hover:scale-105 cursor-pointer"
                     title="Zobrazit detail a metadata skladby"
                     aria-label={`Zobrazit detail skladby ${song.pdf_title}`}
                   >

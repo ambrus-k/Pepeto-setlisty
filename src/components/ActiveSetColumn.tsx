@@ -99,24 +99,24 @@ const SortableSongRow: React.FC<SortableRowProps> = ({
       style={style}
       className={`group flex items-center gap-1.5 sm:gap-2 px-2.5 sm:px-3 py-1 transition-colors select-none ${
         isDragging
-          ? 'opacity-70 scale-[1.01] bg-indigo-950/70 shadow-lg z-30 ring-1 ring-indigo-500 rounded'
+          ? 'opacity-70 scale-[1.01] bg-indigo-100 dark:bg-indigo-950/70 shadow-lg z-30 ring-1 ring-indigo-500 rounded'
           : isUnmatched
-          ? 'bg-amber-950/20 hover:bg-amber-950/30'
-          : 'hover:bg-slate-800/70'
+          ? 'bg-amber-50 dark:bg-amber-950/20 hover:bg-amber-100/80 dark:hover:bg-amber-950/30'
+          : 'hover:bg-slate-100 dark:hover:bg-slate-800/70'
       }`}
     >
       {/* Touch-optimized Drag handle */}
       <div
         {...attributes}
         {...listeners}
-        className="cursor-grab active:cursor-grabbing text-slate-500 hover:text-slate-200 p-1 touch-manipulation flex items-center justify-center rounded hover:bg-slate-700/50"
+        className="cursor-grab active:cursor-grabbing text-slate-400 dark:text-slate-500 hover:text-slate-700 dark:hover:text-slate-200 p-1 touch-manipulation flex items-center justify-center rounded hover:bg-slate-200 dark:hover:bg-slate-700/50"
         title="Uchopte a táhněte pro změnu pořadí"
       >
         <GripVertical className="w-3.5 h-3.5" />
       </div>
 
       {/* Song number in set */}
-      <span className="w-5 shrink-0 text-right font-mono text-xs font-bold text-slate-400">
+      <span className="w-5 shrink-0 text-right font-mono text-xs font-bold text-slate-500 dark:text-slate-400">
         {index + 1}.
       </span>
 
@@ -172,7 +172,7 @@ const SortableSongRow: React.FC<SortableRowProps> = ({
                   }
                 )
               }
-              className="flex items-center gap-1 rounded bg-amber-600 hover:bg-amber-500 text-white font-bold text-[10px] px-2 py-0.5 shadow-sm transition active:scale-95 cursor-pointer"
+              className="flex items-center gap-1 rounded bg-amber-600 hover:bg-amber-500 text-white font-bold text-[0.625rem] px-2 py-0.5 shadow-sm transition active:scale-95 cursor-pointer"
               title="Skladba nebyla 100% nalezena v databázi – klikněte pro ruční spárování"
             >
               <AlertTriangle className="w-3 h-3 text-amber-200" />
@@ -182,7 +182,7 @@ const SortableSongRow: React.FC<SortableRowProps> = ({
 
           {song?.category && !isUnmatched && (
             <span
-              className="text-[10px] uppercase font-bold tracking-wider px-1.5 py-0.5 rounded shrink-0 hidden md:inline"
+              className="text-[0.625rem] uppercase font-bold tracking-wider px-1.5 py-0.5 rounded shrink-0 hidden md:inline"
               style={{
                 backgroundColor: 'rgba(0,0,0,0.1)',
                 color: song ? song.textColor : '#000000',
@@ -200,7 +200,7 @@ const SortableSongRow: React.FC<SortableRowProps> = ({
         <button
           onClick={() => onMoveSongUp(index)}
           disabled={index === 0}
-          className="p-1 rounded text-slate-400 hover:text-white hover:bg-slate-700 disabled:opacity-20 disabled:pointer-events-none transition"
+          className="p-1 rounded text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white hover:bg-slate-200 dark:hover:bg-slate-700 disabled:opacity-20 disabled:pointer-events-none transition"
           title="Posunout nahoru"
         >
           <ArrowUp className="w-3.5 h-3.5" />
@@ -210,7 +210,7 @@ const SortableSongRow: React.FC<SortableRowProps> = ({
         <button
           onClick={() => onMoveSongDown(index)}
           disabled={index === songCount - 1}
-          className="p-1 rounded text-slate-400 hover:text-white hover:bg-slate-700 disabled:opacity-20 disabled:pointer-events-none transition"
+          className="p-1 rounded text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white hover:bg-slate-200 dark:hover:bg-slate-700 disabled:opacity-20 disabled:pointer-events-none transition"
           title="Posunout dolů"
         >
           <ArrowDown className="w-3.5 h-3.5" />
@@ -220,13 +220,13 @@ const SortableSongRow: React.FC<SortableRowProps> = ({
         {allSets.length > 1 && (
           <div className="relative group/set">
             <button
-              className="p-1 rounded text-slate-400 hover:text-indigo-300 hover:bg-slate-700 transition"
+              className="p-1 rounded text-slate-500 dark:text-slate-400 hover:text-indigo-600 dark:hover:text-indigo-300 hover:bg-slate-200 dark:hover:bg-slate-700 transition"
               title="Přesunout do jiného setu"
             >
               <MoveRight className="w-3.5 h-3.5" />
             </button>
-            <div className="absolute right-0 top-full mt-1 hidden group-hover/set:flex flex-col bg-slate-800 border border-slate-700 rounded-lg shadow-xl py-1 z-40 min-w-[120px]">
-              <span className="text-[10px] uppercase font-bold text-slate-400 px-3 py-1">
+            <div className="absolute right-0 top-full mt-1 hidden group-hover/set:flex flex-col bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg shadow-xl py-1 z-40 min-w-[7.5rem]">
+              <span className="text-[0.625rem] uppercase font-bold text-slate-500 dark:text-slate-400 px-3 py-1">
                 Přesunout do:
               </span>
               {allSets
@@ -235,7 +235,7 @@ const SortableSongRow: React.FC<SortableRowProps> = ({
                   <button
                     key={s.id}
                     onClick={() => onMoveSongToSet(index, s.id)}
-                    className="px-3 py-1 text-left text-xs text-slate-200 hover:bg-indigo-600 hover:text-white transition"
+                    className="px-3 py-1 text-left text-xs text-slate-700 dark:text-slate-200 hover:bg-indigo-600 hover:text-white transition"
                   >
                     {s.name}
                   </button>
@@ -247,7 +247,7 @@ const SortableSongRow: React.FC<SortableRowProps> = ({
         {/* Remove */}
         <button
           onClick={() => onRemoveSong(index)}
-          className="p-1 rounded text-slate-400 hover:text-rose-400 hover:bg-rose-950/40 transition"
+          className="p-1 rounded text-slate-500 dark:text-slate-400 hover:text-rose-600 dark:hover:text-rose-400 hover:bg-rose-100 dark:hover:bg-rose-950/40 transition"
           title="Odstranit ze setu"
         >
           <X className="w-3.5 h-3.5" />
@@ -310,29 +310,29 @@ export const ActiveSetColumn: React.FC<ActiveSetColumnProps> = ({
   };
 
   return (
-    <div className="flex flex-col h-full bg-slate-900 rounded-2xl border border-slate-800 shadow-xl overflow-hidden">
+    <div className="flex flex-col h-full bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm dark:shadow-xl overflow-hidden transition-colors">
       {/* Header */}
-      <div className="p-4 bg-slate-900/90 border-b border-slate-800 flex items-center justify-between gap-3">
+      <div className="p-4 bg-slate-50/90 dark:bg-slate-900/90 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between gap-3">
         <div>
           <div className="flex items-center gap-2">
-            <h2 className="text-base sm:text-lg font-bold text-white flex items-center gap-2">
+            <h2 className="text-base sm:text-lg font-bold text-slate-900 dark:text-white flex items-center gap-2">
               <span className="w-2.5 h-2.5 rounded-full bg-indigo-500 animate-pulse" />
               <span>{activeSet.name}</span>
             </h2>
-            <span className="rounded-lg bg-indigo-950/80 border border-indigo-800/60 text-indigo-300 font-bold text-xs px-2 py-0.5">
+            <span className="rounded-lg bg-indigo-100 dark:bg-indigo-950/80 border border-indigo-200 dark:border-indigo-800/60 text-indigo-700 dark:text-indigo-300 font-bold text-xs px-2 py-0.5">
               {songCount} skladeb
             </span>
           </div>
-          <div className="flex items-center gap-2 text-xs text-slate-400 mt-1">
-            <Clock className="w-3.5 h-3.5 text-slate-500" />
+          <div className="flex items-center gap-2 text-xs text-slate-500 dark:text-slate-400 mt-1">
+            <Clock className="w-3.5 h-3.5 text-slate-400 dark:text-slate-500" />
             <span>Čas hraní cca: {totalMinutes > 0 ? `${totalMinutes} min` : '0 min'}</span>
           </div>
         </div>
 
         {songCount > 0 && (
           isConfirmingClear ? (
-            <div className="flex items-center gap-1.5 bg-rose-950/90 border border-rose-500/60 rounded-xl p-1 animate-fadeIn shadow-lg">
-              <span className="text-[11px] text-rose-200 font-bold pl-1.5 whitespace-nowrap">
+            <div className="flex items-center gap-1.5 bg-rose-50 dark:bg-rose-950/90 border border-rose-300 dark:border-rose-500/60 rounded-xl p-1 animate-fadeIn shadow-lg">
+              <span className="text-[0.6875rem] text-rose-700 dark:text-rose-200 font-bold pl-1.5 whitespace-nowrap">
                 Vysypat set?
               </span>
               <button
@@ -348,7 +348,7 @@ export const ActiveSetColumn: React.FC<ActiveSetColumnProps> = ({
               <button
                 type="button"
                 onClick={() => setIsConfirmingClear(false)}
-                className="px-2 py-1 bg-slate-800 hover:bg-slate-700 active:bg-slate-900 text-slate-300 text-xs rounded-lg transition cursor-pointer"
+                className="px-2 py-1 bg-slate-200 dark:bg-slate-800 hover:bg-slate-300 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 text-xs rounded-lg transition cursor-pointer"
               >
                 Zrušit
               </button>
@@ -357,10 +357,10 @@ export const ActiveSetColumn: React.FC<ActiveSetColumnProps> = ({
             <button
               type="button"
               onClick={() => setIsConfirmingClear(true)}
-              className="flex items-center gap-1.5 rounded-xl border border-slate-700 hover:border-rose-500/50 bg-slate-800/70 hover:bg-rose-950/40 text-slate-300 hover:text-rose-200 px-3 py-1.5 text-xs font-semibold transition active:scale-95 cursor-pointer shadow-sm"
+              className="flex items-center gap-1.5 rounded-xl border border-slate-300 dark:border-slate-700 hover:border-rose-400 dark:hover:border-rose-500/50 bg-slate-100 dark:bg-slate-800/70 hover:bg-rose-50 dark:hover:bg-rose-950/40 text-slate-700 dark:text-slate-300 hover:text-rose-700 dark:hover:text-rose-200 px-3 py-1.5 text-xs font-semibold transition active:scale-95 cursor-pointer shadow-sm"
               title="Vyprázdnit tento set"
             >
-              <Trash2 className="w-3.5 h-3.5 text-rose-400" />
+              <Trash2 className="w-3.5 h-3.5 text-rose-500 dark:text-rose-400" />
               <span>Vysypat set</span>
             </button>
           )
@@ -368,13 +368,13 @@ export const ActiveSetColumn: React.FC<ActiveSetColumnProps> = ({
       </div>
 
       {/* Song List in Set with Touch-Optimized SortableContext */}
-      <div className="flex-1 overflow-y-auto divide-y divide-slate-800/80 bg-slate-900/50">
+      <div className="flex-1 overflow-y-auto divide-y divide-slate-200/80 dark:divide-slate-800/80 bg-white dark:bg-slate-900/50">
         {songCount === 0 ? (
           <div className="flex flex-col items-center justify-center h-64 text-center p-6 text-slate-500">
-            <div className="w-12 h-12 rounded-2xl bg-slate-800 flex items-center justify-center text-slate-400 mb-3">
+            <div className="w-12 h-12 rounded-2xl bg-slate-100 dark:bg-slate-800 flex items-center justify-center text-slate-400 mb-3">
               <Music className="w-6 h-6" />
             </div>
-            <p className="text-sm font-semibold text-slate-300">Set je zatím prázdný</p>
+            <p className="text-sm font-semibold text-slate-700 dark:text-slate-300">Set je zatím prázdný</p>
             <p className="text-xs text-slate-500 max-w-xs mt-1">
               Kliknutím na skladby v pravém sloupci (Knihovna) je sem okamžitě přidáte.
             </p>
