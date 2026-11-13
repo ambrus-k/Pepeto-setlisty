@@ -15,6 +15,7 @@ import { OfflineIndicator } from './components/OfflineIndicator';
 import { ToastProvider, useToast } from './components/Toast';
 import { ImportModal } from './components/ImportModal';
 import { ManualPairModal } from './components/ManualPairModal';
+import { DisplaySettingsModal } from './components/DisplaySettingsModal';
 import { importMssText, importXlsxBuffer, ImportResult } from './services/importSetlist';
 
 const DEFAULT_SETS: SetlistGroup[] = [
@@ -58,6 +59,7 @@ function SetlistStudio() {
   const [isExportOpen, setIsExportOpen] = useState<boolean>(false);
   const [isExporting, setIsExporting] = useState<boolean>(false);
   const [isImportModalOpen, setIsImportModalOpen] = useState<boolean>(false);
+  const [isDisplaySettingsOpen, setIsDisplaySettingsOpen] = useState<boolean>(false);
   const [pairingSong, setPairingSong] = useState<Song | null>(null);
   const [exportProgress, setExportProgress] = useState<ExportProgressState>(DEFAULT_EXPORT_PROGRESS);
 
@@ -599,7 +601,7 @@ function SetlistStudio() {
   };
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-sans selection:bg-indigo-500/30 selection:text-indigo-200">
+    <div className="min-h-screen bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 flex flex-col font-sans selection:bg-indigo-500/30 selection:text-indigo-900 dark:selection:text-indigo-200 transition-colors">
       {/* 1. Header with Event Name, Role badge, and Export buttons */}
       <Header
         eventName={eventName}
@@ -618,11 +620,12 @@ function SetlistStudio() {
         isExporting={isExporting}
         onDirectFileImport={handleDirectFileImport}
         onOpenImportModal={() => setIsImportModalOpen(true)}
+        onOpenDisplaySettings={() => setIsDisplaySettingsOpen(true)}
       />
 
       {/* Sync feedback notification banner if any */}
       {syncMessage && (
-        <div className="bg-indigo-900/80 border-b border-indigo-700/50 py-1.5 px-4 text-center text-xs text-indigo-200 font-semibold animate-fadeIn">
+        <div className="bg-indigo-100 dark:bg-indigo-900/80 border-b border-indigo-200 dark:border-indigo-700/50 py-1.5 px-4 text-center text-xs text-indigo-800 dark:text-indigo-200 font-semibold animate-fadeIn">
           {syncMessage}
         </div>
       )}
@@ -639,7 +642,7 @@ function SetlistStudio() {
       {/* 3. Main Two-Column Layout */}
       <main className="flex-1 max-w-7xl w-full mx-auto p-3 sm:p-4 grid grid-cols-1 lg:grid-cols-12 gap-3.5 sm:gap-4 overflow-hidden">
         {/* LEVÝ SLOUPEC: Aktivní Set */}
-        <section className="lg:col-span-6 flex flex-col h-[calc(100vh-148px)] min-h-[500px]">
+        <section className="lg:col-span-6 flex flex-col h-[calc(100vh-9.5rem)] min-h-[28rem]">
           <ActiveSetColumn
             activeSet={activeSet}
             songsMap={songsMap}
@@ -655,7 +658,7 @@ function SetlistStudio() {
         </section>
 
         {/* PRAVÝ SLOUPEC: Knihovna skladeb */}
-        <section className="lg:col-span-6 flex flex-col h-[calc(100vh-148px)] min-h-[500px]">
+        <section className="lg:col-span-6 flex flex-col h-[calc(100vh-9.5rem)] min-h-[28rem]">
           <LibraryColumn
             songs={songs}
             activeSet={activeSet}
@@ -711,6 +714,12 @@ function SetlistStudio() {
         masterSongs={songs}
         onPairSong={handlePairSong}
       />
+
+      {/* Display Settings Modal (accessible to all users) */}
+      <DisplaySettingsModal
+        isOpen={isDisplaySettingsOpen}
+        onClose={() => setIsDisplaySettingsOpen(false)}
+      />
     </div>
   );
 }
@@ -720,7 +729,7 @@ export default function App() {
 
   if (isLoading) {
     return (
-      <div className="min-h-screen bg-slate-950 flex items-center justify-center text-slate-400 text-xs">
+      <div className="min-h-screen bg-slate-50 dark:bg-slate-950 flex items-center justify-center text-slate-600 dark:text-slate-400 text-xs">
         <span className="w-5 h-5 rounded-full border-2 border-indigo-500 border-t-transparent animate-spin mr-2" />
         <span>Načítám Setlist Studio...</span>
       </div>
