@@ -1,7 +1,16 @@
 import React, { useState, useMemo } from 'react';
-import { Search, X, Plus, Check, Filter, HardDrive, HelpCircle } from 'lucide-react';
+import { Search, X, Plus, Check, Filter, HardDrive, HelpCircle, Zap } from 'lucide-react';
 import { Song, SetlistGroup } from '../types';
 import { cleanTitleForPdf } from '../services/exportGenerator';
+
+const ENERGY_PRESETS = [
+  { label: '1–3 Klidná', min: 1, max: 3, activeClass: 'bg-emerald-600 text-white' },
+  { label: '4–5 Střední', min: 4, max: 5, activeClass: 'bg-sky-600 text-white' },
+  { label: '6–7 Rytmická', min: 6, max: 7, activeClass: 'bg-amber-600 text-white' },
+  { label: '8–10 Rychlá', min: 8, max: 10, activeClass: 'bg-rose-600 text-white' },
+] as const;
+
+const ENERGY_LEVELS = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10] as const;
 
 interface LibraryColumnProps {
   songs: Song[];
@@ -54,6 +63,44 @@ export const LibraryColumn: React.FC<LibraryColumnProps> = ({
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
   const [filterUnassigned, setFilterUnassigned] = useState(false);
+  const [energyMin, setEnergyMin] = useState<number | null>(null);
+  const [energyMax, setEnergyMax] = useState<number | null>(null);
+
+  const isEnergyFilterActive = energyMin !== null || energyMax !== null;
+
+  const handleEnergyMinChange = (value: string) => {
+    if (!value) {
+      setEnergyMin(null);
+      return;
+    }
+    const nextMin = Number(value);
+    setEnergyMin(nextMin);
+    if (energyMax !== null && nextMin > energyMax) {
+      setEnergyMax(nextMin);
+    }
+  };
+
+  const handleEnergyMaxChange = (value: string) => {
+    if (!value) {
+      setEnergyMax(null);
+      return;
+    }
+    const nextMax = Number(value);
+    setEnergyMax(nextMax);
+    if (energyMin !== null && nextMax < energyMin) {
+      setEnergyMin(nextMax);
+    }
+  };
+
+  const handleEnergyPresetClick = (min: number, max: number) => {
+    if (energyMin === min && energyMax === max) {
+      setEnergyMin(null);
+      setEnergyMax(null);
+    } else {
+      setEnergyMin(min);
+      setEnergyMax(max);
+    }
+  };
 
   // Set of all song IDs assigned anywhere across all sets
   const assignedSongIds = useMemo(() => {
@@ -97,6 +144,18 @@ export const LibraryColumn: React.FC<LibraryColumnProps> = ({
         return false;
       }
 
+      // Energy filter (1–10)
+      if (isEnergyFilterActive) {
+        if (typeof song.energy !== 'number') {
+          return false;
+        }
+        const min = energyMin ?? 1;
+        const max = energyMax ?? 10;
+        if (song.energy < min || song.energy > max) {
+          return false;
+        }
+      }
+
       // Search query
       if (!q) return true;
 
@@ -126,7 +185,7 @@ export const LibraryColumn: React.FC<LibraryColumnProps> = ({
         danceMatch
       );
     });
-  }, [songs, searchQuery, selectedCategory, filterUnassigned, assignedSongIds]);
+  }, [songs, searchQuery, selectedCategory, filterUnassigned, assignedSongIds, isEnergyFilterActive, energyMin, energyMax]);
 
   return (
     <div className="flex flex-col h-full bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm dark:shadow-xl overflow-hidden transition-colors">
@@ -206,6 +265,91 @@ export const LibraryColumn: React.FC<LibraryColumnProps> = ({
             ))}
           </div>
         )}
+
+        {/* Energy Filter (1–10) */}
+        <div className="flex flex-wrap items-center gap-1.5 text-xs">
+          <span className="inline-flex items-center gap-1 font-semibold text-slate-600 dark:text-slate-300 mr-0.5">
+            <Zap className="w-3.5 h-3.5 text-amber-500" />
+            <span>Energie:</span>
+          </span>
+
+          <button
+            type="button"
+            onClick={() => {
+              setEnergyMin(null);
+              setEnergyMax(null);
+            }}
+            className={`rounded-lg px-2 py-1 text-xs font-semibold transition cursor-pointer ${
+              !isEnergyFilterActive
+                ? 'bg-indigo-600 text-white'
+                : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-700 hover:text-slate-900 dark:hover:text-slate-200'
+            }`}
+          >
+            Vše
+          </button>
+
+          {ENERGY_PRESETS.map((preset) => {
+            const isActive = energyMin === preset.min && energyMax === preset.max;
+            return (
+              <button
+                key={preset.label}
+                type="button"
+                onClick={() => handleEnergyPresetClick(preset.min, preset.max)}
+                className={`rounded-lg px-2 py-1 text-xs font-semibold transition cursor-pointer ${
+                  isActive
+                    ? preset.activeClass
+                    : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-700 hover:text-slate-900 dark:hover:text-slate-200'
+                }`}
+              >
+                {preset.label}
+              </button>
+            );
+          })}
+
+          <div className="flex items-center gap-1 ml-auto">
+            <select
+              aria-label="Minimální energie"
+              value={energyMin ?? ''}
+              onChange={(e) => handleEnergyMinChange(e.target.value)}
+              className="rounded-lg bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 text-slate-700 dark:text-slate-200 text-xs font-medium px-1.5 py-1 focus:outline-none focus:ring-2 focus:ring-indigo-500 cursor-pointer"
+            >
+              <option value="">Od</option>
+              {ENERGY_LEVELS.map((lvl) => (
+                <option key={lvl} value={lvl}>
+                  {lvl}
+                </option>
+              ))}
+            </select>
+            <span className="text-slate-400">–</span>
+            <select
+              aria-label="Maximální energie"
+              value={energyMax ?? ''}
+              onChange={(e) => handleEnergyMaxChange(e.target.value)}
+              className="rounded-lg bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 text-slate-700 dark:text-slate-200 text-xs font-medium px-1.5 py-1 focus:outline-none focus:ring-2 focus:ring-indigo-500 cursor-pointer"
+            >
+              <option value="">Do</option>
+              {ENERGY_LEVELS.map((lvl) => (
+                <option key={lvl} value={lvl}>
+                  {lvl}
+                </option>
+              ))}
+            </select>
+            {isEnergyFilterActive && (
+              <button
+                type="button"
+                onClick={() => {
+                  setEnergyMin(null);
+                  setEnergyMax(null);
+                }}
+                className="p-1 rounded-lg text-slate-400 hover:text-slate-700 dark:hover:text-white hover:bg-slate-200 dark:hover:bg-slate-700 transition cursor-pointer"
+                title="Zrušit filtr energie"
+                aria-label="Zrušit filtr energie"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            )}
+          </div>
+        </div>
       </div>
 
       {/* Song List - High Density with Hairline Dividers */}
@@ -262,17 +406,32 @@ export const LibraryColumn: React.FC<LibraryColumnProps> = ({
                     </span>
                   </div>
 
-                  {song.category && (
-                    <span
-                      className="text-[0.625rem] uppercase font-bold tracking-wider px-1.5 py-0.5 rounded shrink-0 hidden md:inline"
-                      style={{
-                        backgroundColor: 'rgba(0,0,0,0.1)',
-                        color: song.textColor || '#000000',
-                      }}
-                    >
-                      {song.category}
-                    </span>
-                  )}
+                  <div className="flex items-center gap-1 shrink-0">
+                    {typeof song.energy === 'number' && (
+                      <span
+                        className="inline-flex items-center gap-0.5 text-[0.625rem] font-bold px-1.5 py-0.5 rounded shrink-0 tabular-nums"
+                        style={{
+                          backgroundColor: 'rgba(0,0,0,0.1)',
+                          color: song.textColor || '#000000',
+                        }}
+                        title={`Energie: ${song.energy} / 10`}
+                      >
+                        <Zap className="w-2.5 h-2.5" />
+                        {song.energy}
+                      </span>
+                    )}
+                    {song.category && (
+                      <span
+                        className="text-[0.625rem] uppercase font-bold tracking-wider px-1.5 py-0.5 rounded shrink-0 hidden md:inline"
+                        style={{
+                          backgroundColor: 'rgba(0,0,0,0.1)',
+                          color: song.textColor || '#000000',
+                        }}
+                      >
+                        {song.category}
+                      </span>
+                    )}
+                  </div>
                 </div>
 
                 {/* Status Badge & Quick Add button */}
