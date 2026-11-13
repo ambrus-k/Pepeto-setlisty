@@ -893,15 +893,28 @@ export const LibraryColumn: React.FC<LibraryColumnProps> = ({
                         {song.energy}
                       </span>
                     )}
-                    {song.category && (
+                    {song.pepeto?.singer && song.pepeto.singer !== 'Běžně se nehraje / Neurčeno' && (
                       <span
-                        className="text-[0.625rem] uppercase font-bold tracking-wider px-1.5 py-0.5 rounded shrink-0 hidden md:inline"
+                        className="text-[0.625rem] font-bold px-1.5 py-0.5 rounded shrink-0 hidden sm:inline"
                         style={{
                           backgroundColor: 'rgba(0,0,0,0.1)',
                           color: song.textColor || '#000000',
                         }}
+                        title={`Zpívá: ${song.pepeto.singer}`}
                       >
-                        {song.category}
+                        {song.pepeto.singer}
+                      </span>
+                    )}
+                    {song.pepeto?.sax && (
+                      <span
+                        className="text-[0.625rem] font-bold px-1.5 py-0.5 rounded shrink-0 hidden sm:inline"
+                        style={{
+                          backgroundColor: 'rgba(0,0,0,0.15)',
+                          color: song.textColor || '#000000',
+                        }}
+                        title={`Saxofon: ${song.pepeto.sax}`}
+                      >
+                        {song.pepeto.sax}
                       </span>
                     )}
                   </div>
