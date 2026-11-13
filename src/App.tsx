@@ -319,6 +319,7 @@ function SetlistStudio() {
           return { ...s, songIds: list };
         }
         if (s.id === targetSetId) {
+          if (s.songIds.includes(songId)) return s;
           return { ...s, songIds: [...s.songIds, songId] };
         }
         return s;
