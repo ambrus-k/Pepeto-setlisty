@@ -296,7 +296,7 @@ export const LibraryColumn: React.FC<LibraryColumnProps> = ({
                       e.preventDefault();
                       onInspectSong(song);
                     }}
-                    className="w-6 h-6 rounded bg-slate-800/90 hover:bg-slate-700 border border-slate-600/80 text-slate-200 flex items-center justify-center transition shadow-xs hover:scale-105"
+                    className="w-6 h-6 rounded bg-slate-100 dark:bg-slate-800/90 hover:bg-slate-200 dark:hover:bg-slate-700 border border-slate-300 dark:border-slate-600/80 text-slate-600 dark:text-slate-200 flex items-center justify-center transition shadow-xs hover:scale-105 cursor-pointer"
                     title="Zobrazit detail a metadata skladby"
                     aria-label={`Zobrazit detail skladby ${song.pdf_title}`}
                   >

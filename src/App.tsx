@@ -734,6 +734,8 @@ function SetlistStudio() {
       <DisplaySettingsModal
         isOpen={isDisplaySettingsOpen}
         onClose={() => setIsDisplaySettingsOpen(false)}
+      />
+
       {/* Song Detail (?) Modal */}
       <SongDetailModal
         song={inspectedSong}
