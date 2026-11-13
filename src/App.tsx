@@ -16,7 +16,9 @@ import { ToastProvider, useToast } from './components/Toast';
 import { ImportModal } from './components/ImportModal';
 import { ManualPairModal } from './components/ManualPairModal';
 import { DisplaySettingsModal } from './components/DisplaySettingsModal';
+import { SongDetailModal } from './components/SongDetailModal';
 import { importMssText, importXlsxBuffer, ImportResult } from './services/importSetlist';
+import { enrichSongsWithDatabase, getBundledDatabaseSongs } from './services/songEnricher';
 
 const DEFAULT_SETS: SetlistGroup[] = [
   { id: 'set-1', name: 'Set 1', songIds: [] },
@@ -61,6 +63,7 @@ function SetlistStudio() {
   const [isImportModalOpen, setIsImportModalOpen] = useState<boolean>(false);
   const [isDisplaySettingsOpen, setIsDisplaySettingsOpen] = useState<boolean>(false);
   const [pairingSong, setPairingSong] = useState<Song | null>(null);
+  const [inspectedSong, setInspectedSong] = useState<Song | null>(null);
   const [exportProgress, setExportProgress] = useState<ExportProgressState>(DEFAULT_EXPORT_PROGRESS);
 
   // Generated artifacts for Export Modal
@@ -97,9 +100,14 @@ function SetlistStudio() {
       try {
         const savedSongs = await storage.getSongs();
         if (savedSongs && savedSongs.length > 0) {
-          setSongs(savedSongs);
+          const enrichedLocal = enrichSongsWithDatabase(savedSongs);
+          setSongs(enrichedLocal);
         } else {
-          // If IndexedDB is empty, trigger initial fetch from backend API
+          // Provide bundled DB immediately while attempting live Google Drive sync
+          const bundled = getBundledDatabaseSongs();
+          if (bundled.length > 0) {
+            setSongs(bundled);
+          }
           handleSyncDatabase(false);
         }
 
@@ -145,10 +153,11 @@ function SetlistStudio() {
 
       const data = await res.json();
       if (data.songs && Array.isArray(data.songs) && data.songs.length > 0) {
-        setSongs(data.songs);
-        await storage.saveSongs(data.songs);
+        const enrichedSongs = enrichSongsWithDatabase(data.songs, data.dbSongs);
+        setSongs(enrichedSongs);
+        await storage.saveSongs(enrichedSongs);
         const sourceNote = data.source === 'google-drive' ? 'z Google Disku' : 'z centrální databáze';
-        setSyncMessage(`Úspěšně načteno ${data.songs.length} skladeb ${sourceNote}!`);
+        setSyncMessage(`Úspěšně načteno ${enrichedSongs.length} skladeb ${sourceNote}!`);
         setTimeout(() => setSyncMessage(null), 4000);
       }
     } catch (err: any) {
@@ -156,7 +165,12 @@ function SetlistStudio() {
       // If we already have songs, don't wipe them
       const localSongs = await storage.getSongs();
       if (localSongs && localSongs.length > 0) {
-        setSongs(localSongs);
+        setSongs(enrichSongsWithDatabase(localSongs));
+      } else {
+        const bundled = getBundledDatabaseSongs();
+        if (bundled.length > 0) {
+          setSongs(bundled);
+        }
       }
       setSyncMessage(`Chyba při synchronizaci: ${err.message}`);
       setTimeout(() => setSyncMessage(null), 5000);
@@ -664,6 +678,7 @@ function SetlistStudio() {
             activeSet={activeSet}
             allSets={sets}
             onAddSongToActiveSet={handleAddSongToActiveSet}
+            onInspectSong={setInspectedSong}
             onSyncDatabase={() => handleSyncDatabase(false)}
           />
         </section>
@@ -719,6 +734,13 @@ function SetlistStudio() {
       <DisplaySettingsModal
         isOpen={isDisplaySettingsOpen}
         onClose={() => setIsDisplaySettingsOpen(false)}
+      {/* Song Detail (?) Modal */}
+      <SongDetailModal
+        song={inspectedSong}
+        activeSetName={activeSet.name}
+        isInActiveSet={inspectedSong ? activeSet.songIds.includes(inspectedSong.id) : false}
+        onClose={() => setInspectedSong(null)}
+        onAddSongToActiveSet={handleAddSongToActiveSet}
       />
     </div>
   );

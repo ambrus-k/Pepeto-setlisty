@@ -57,6 +57,7 @@ export function getAdminLogs(): AdminLogEntry[] {
 
 // In-memory songs cache
 let cachedSongs: Song[] = [];
+let cachedDbSongs: Song[] = [];
 let lastSyncedAt: number | undefined;
 let lastExportedAt: number | undefined;
 export let lastParsedXlsx: any[] = [];
@@ -649,6 +650,7 @@ export async function syncMasterSongsFromDrive(forceRefresh = false): Promise<{
   success: boolean;
   count: number;
   songs: Song[];
+  dbSongs?: Song[];
   syncedAt: number;
   source: 'google-drive' | 'cached' | 'fallback';
   message?: string;
@@ -659,6 +661,7 @@ export async function syncMasterSongsFromDrive(forceRefresh = false): Promise<{
       success: true,
       count: cachedSongs.length,
       songs: cachedSongs,
+      dbSongs: cachedDbSongs.length > 0 ? cachedDbSongs : undefined,
       syncedAt: lastSyncedAt,
       source: 'cached',
     };
@@ -738,6 +741,25 @@ export async function syncMasterSongsFromDrive(forceRefresh = false): Promise<{
       downloadFileFromDrive(xlsxFile.id, token),
     ]);
 
+    // 3b. Optionally download rich metadata DB JSON if present in the Data folder
+    const dbJsonFile =
+      files.find((f) => f.name.toLowerCase() === 'pepeto-songs-app-db.json') ||
+      files.find((f) => f.name.toLowerCase() === 'pepeto-songs-database.json');
+
+    let driveDbSongs: Song[] = [];
+    if (dbJsonFile) {
+      try {
+        const dbBuffer = await downloadFileFromDrive(dbJsonFile.id, token);
+        const dbParsed = JSON.parse(new TextDecoder('utf-8').decode(dbBuffer));
+        if (Array.isArray(dbParsed?.songs)) {
+          driveDbSongs = dbParsed.songs;
+          addLog('info', 'SYNC_DB_JSON', `Načtena rozšířená databáze z Google Disku (${dbJsonFile.name}: ${driveDbSongs.length} záznamů).`);
+        }
+      } catch (dbErr: any) {
+        console.warn('Optional Drive DB JSON parse failed:', dbErr?.message);
+      }
+    }
+
     // 4. Parse MSS (XML) and XLSX (ExcelJS with colors)
     const mssText = new TextDecoder('utf-8').decode(mssBuffer);
     const parsedMss = parseMssXml(mssText);
@@ -755,6 +777,9 @@ export async function syncMasterSongsFromDrive(forceRefresh = false): Promise<{
     }
 
     cachedSongs = paired;
+    if (driveDbSongs.length > 0) {
+      cachedDbSongs = driveDbSongs;
+    }
     lastSyncedAt = Date.now();
 
     addLog('success', 'SYNC_SUCCESS', `Úspěšně spárováno a načteno ${paired.length} skladeb z Google Disku přes ExcelJS!`);
@@ -763,6 +788,7 @@ export async function syncMasterSongsFromDrive(forceRefresh = false): Promise<{
       success: true,
       count: paired.length,
       songs: paired,
+      dbSongs: driveDbSongs.length > 0 ? driveDbSongs : undefined,
       syncedAt: lastSyncedAt,
       source: 'google-drive',
       message: `Úspěšně synchronizováno ${paired.length} skladeb z Google Disku.`,
@@ -774,6 +800,7 @@ export async function syncMasterSongsFromDrive(forceRefresh = false): Promise<{
         success: true,
         count: cachedSongs.length,
         songs: cachedSongs,
+        dbSongs: cachedDbSongs.length > 0 ? cachedDbSongs : undefined,
         syncedAt: lastSyncedAt || Date.now(),
         source: 'cached',
         message: `Synchronizace selhala (${err.message}), použita stávající cache (${cachedSongs.length} skladeb).`,
