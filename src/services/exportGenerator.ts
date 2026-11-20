@@ -153,11 +153,13 @@ export function generateMssXml(
       if (song) {
         // Názvy musí být VŽDY podle souboru MSS pro MobileSheets!
         const title = escapeXml(song.mss_title);
-        const fileName = escapeXml(song.fileName || `${song.mss_title}.pdf`);
+        const fileName = escapeXml(song.mss_fileName || song.fileName || `${song.mss_title}.pdf`);
         const fileType = song.fileType !== undefined ? song.fileType : 1;
         xml += `    <Song>\n`;
         xml += `      <Title>${title}</Title>\n`;
-        xml += `      <SongId>${song.id}</SongId>\n`;
+        if (song.mss_songId !== null && song.id >= 0) {
+          xml += `      <SongId>${song.mss_songId ?? song.id}</SongId>\n`;
+        }
         xml += `      <FileName>${fileName}</FileName>\n`;
         xml += `      <FileType>${fileType}</FileType>\n`;
         xml += `    </Song>\n`;

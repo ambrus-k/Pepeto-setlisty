@@ -1,5 +1,5 @@
 import localforage from 'localforage';
-import type { Song, EventProject, PendingUpload } from '../types/index.ts';
+import type { Song, EventProject, PendingUpload, PepetoSingerLegendItem } from '../types/index.ts';
 
 // Configure localforage instance for MobileSheets Setlist Studio
 const store = localforage.createInstance({
@@ -10,6 +10,7 @@ const store = localforage.createInstance({
 
 const KEYS = {
   MASTER_SONGS: 'master_songs_db',
+  SINGER_LEGEND: 'singer_legend_db',
   CURRENT_PROJECT: 'current_active_project',
   SAVED_PROJECTS: 'saved_projects_list',
   PENDING_UPLOADS: 'pending_drive_uploads',
@@ -27,6 +28,15 @@ export const storage = {
 
   async getSongs(): Promise<Song[] | null> {
     return await store.getItem<Song[]>(KEYS.MASTER_SONGS);
+  },
+
+  // Dynamic color -> singer legend parsed from Excel
+  async saveSingerLegend(legend: PepetoSingerLegendItem[]): Promise<void> {
+    await store.setItem(KEYS.SINGER_LEGEND, legend);
+  },
+
+  async getSingerLegend(): Promise<PepetoSingerLegendItem[] | null> {
+    return await store.getItem<PepetoSingerLegendItem[]>(KEYS.SINGER_LEGEND);
   },
 
   // Active event project

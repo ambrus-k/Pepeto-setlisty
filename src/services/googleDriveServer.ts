@@ -23,8 +23,20 @@ import { JWT, OAuth2Client } from 'google-auth-library';
 import ExcelJS from 'exceljs';
 import fs from 'fs';
 import path from 'path';
-import type { Song, AdminLogEntry, ServerDriveStatus } from '../types/index.ts';
-import { parseMssXml, parseXlsx, pairMssAndXlsx } from './parser.ts';
+import type {
+  Song,
+  AdminLogEntry,
+  ServerDriveStatus,
+  PepetoSingerLegendItem,
+} from '../types/index.ts';
+import {
+  parseMssXml,
+  parseXlsxWithLegend,
+  pairMssAndXlsx,
+  normalizeLegendSingerName,
+  normalizeHexColor,
+} from './parser.ts';
+import { parseExcelAllStyles } from './excelStyleParser.ts';
 
 // In-memory admin logs (last 50 events)
 const adminLogs: AdminLogEntry[] = [
@@ -55,15 +67,19 @@ export function getAdminLogs(): AdminLogEntry[] {
   return [...adminLogs];
 }
 
-// In-memory songs cache
+// In-memory songs & legend cache
 let cachedSongs: Song[] = [];
 let cachedDbSongs: Song[] = [];
+let cachedLegend: PepetoSingerLegendItem[] = [];
 let lastSyncedAt: number | undefined;
 let lastExportedAt: number | undefined;
 export let lastParsedXlsx: any[] = [];
+export let lastParsedLegend: PepetoSingerLegendItem[] = [];
 
-// Persisted folder settings file
-const SETTINGS_FILE = path.resolve(process.cwd(), '.drive-settings.json');
+// Persisted folder settings file (use /tmp on Vercel read-only filesystem)
+const SETTINGS_FILE = process.env.VERCEL
+  ? path.join('/tmp', '.drive-settings.json')
+  : path.resolve(process.cwd(), '.drive-settings.json');
 
 function loadPersistedFolderSettings(): { dataFolderId?: string; exportFolderId?: string } {
   try {
@@ -267,84 +283,198 @@ async function downloadFileFromDrive(fileId: string, token: string): Promise<Arr
 }
 
 /**
- * Parse Excel file using ExcelJS on the server
- * Extracts id, pdf_title, textColor, bgColor, and category.
+ * Parse Excel file using ExcelJS + OpenXML theme/indexed color resolver on the server.
+ * Extracts:
+ * - songs (id, pdf_title, textColor, bgColor strictly from the number cell, category, isPrimarySheet)
+ * - dynamic color legend from the "Legenda:" section below the song list
  */
-export async function parseXlsxWithExcelJs(buffer: ArrayBuffer): Promise<any[]> {
+export async function parseXlsxWithExcelJsAndLegend(buffer: ArrayBuffer): Promise<{
+  items: any[];
+  legend: PepetoSingerLegendItem[];
+}> {
   try {
     const workbook = new ExcelJS.Workbook();
     const nodeBuf = Buffer.isBuffer(buffer) ? buffer : Buffer.from(buffer);
     await workbook.xlsx.load(nodeBuf as any);
 
+    // Also parse OpenXML styles/themes so Theme colors (+tint) and Indexed colors resolve accurately
+    let openXmlStyles: Awaited<ReturnType<typeof parseExcelAllStyles>> | null = null;
+    try {
+      const arrayBuf = nodeBuf.buffer.slice(
+        nodeBuf.byteOffset,
+        nodeBuf.byteOffset + nodeBuf.byteLength
+      ) as ArrayBuffer;
+      openXmlStyles = await parseExcelAllStyles(arrayBuf);
+    } catch (oxmlErr) {
+      console.warn('OpenXML theme/style supplement failed, using ExcelJS ARGB only:', oxmlErr);
+    }
+
     const items: any[] = [];
+    const legend: PepetoSingerLegendItem[] = [];
+    const seenLegendColors = new Set<string>();
 
     // Primární obarvený list "Seznam - vybarvený" má absolutní přednost!
-    // Pracovní / vyškrtané listy ("Seznam komplet - vyškrtané", "Seznam k odstranění") se přeskakují.
-    const sortedSheets = [...workbook.worksheets].sort((a, b) => {
-      const aName = (a.name || '').toLowerCase();
-      const bName = (b.name || '').toLowerCase();
-      const aIsVybarven = aName.includes('vybarven');
-      const bIsVybarven = bName.includes('vybarven');
-      if (aIsVybarven && !bIsVybarven) return -1;
-      if (!aIsVybarven && bIsVybarven) return 1;
-      return 0;
-    });
+    // Pokud existuje, nečteme pracovní/neobarvené listy (např. "Seznam komplet" s vizuálním žlutým pruhováním sloupců).
+    // Pracovní / vyškrtané listy ("Seznam komplet - vyškrtané", "Seznam k odstranění") se vždy přeskakují.
+    const hasPrimaryColoredSheet = workbook.worksheets.some((ws) =>
+      (ws.name || '').toLowerCase().includes('vybarven')
+    );
+
+    const sortedSheets = [...workbook.worksheets]
+      .filter((ws) => {
+        const name = ws.name || '';
+        if (/odstran|vyškrt/i.test(name)) {
+          addLog('info', 'SHEET_SKIP', `Přeskakuji neaktivní/vyškrtaný list "${name}"`);
+          return false;
+        }
+        if (hasPrimaryColoredSheet && !name.toLowerCase().includes('vybarven')) {
+          return false;
+        }
+        return true;
+      })
+      .sort((a, b) => {
+        const aIsVybarven = (a.name || '').toLowerCase().includes('vybarven');
+        const bIsVybarven = (b.name || '').toLowerCase().includes('vybarven');
+        if (aIsVybarven && !bIsVybarven) return -1;
+        if (!aIsVybarven && bIsVybarven) return 1;
+        return 0;
+      });
 
     const seenPrimaryIds = new Set<number>();
 
+    const extractCellText = (cell: ExcelJS.Cell): string => {
+      const v: any = cell.value;
+      if (v === null || v === undefined) return '';
+      if (typeof v === 'object' && Array.isArray(v.richText)) {
+        return v.richText.map((p: any) => p.text || '').join('').trim();
+      }
+      if (typeof v === 'object' && v.result !== undefined) {
+        return String(v.result).trim();
+      }
+      if (typeof v === 'object' && v.text !== undefined) {
+        return String(v.text).trim();
+      }
+      return String(v).trim();
+    };
+
     for (const worksheet of sortedSheets) {
       const sheetName = worksheet.name || '';
-      if (/odstran|vyškrt/i.test(sheetName)) {
-        addLog('info', 'SHEET_SKIP', `Přeskakuji neaktivní/vyškrtaný list "${sheetName}"`);
-        continue;
-      }
-
       const isPrimarySheet = sheetName.toLowerCase().includes('vybarven');
+      const oxmlSheet = openXmlStyles?.sheets.get(sheetName);
+
+      const resolveCellBgHex = (cell: ExcelJS.Cell): string => {
+        // 1. Check ExcelJS direct ARGB fill (only when pattern is active, not 'none')
+        if (cell.fill && typeof cell.fill === 'object') {
+          const fill: any = cell.fill;
+          const pattern = String(fill.pattern || '').toLowerCase();
+          if (pattern && pattern !== 'none') {
+            const fg = fill.fgColor;
+            if (fg?.argb && typeof fg.argb === 'string') {
+              let hex = fg.argb.trim();
+              if (hex.length === 8) hex = hex.substring(2);
+              if (/^[0-9a-fA-F]{6}$/.test(hex)) {
+                const lower = hex.toLowerCase();
+                return lower === '000000' ? '#ffffff' : `#${lower}`;
+              }
+            }
+          }
+        }
+
+        // 2. Fallback to OpenXML resolved color (handles Theme + Tint + Indexed colors)
+        const oxmlBg = oxmlSheet?.cellColors.get(cell.address.toUpperCase())?.bgColor;
+        if (oxmlBg) {
+          const norm = normalizeHexColor(oxmlBg, '#ffffff');
+          if (norm !== '#000000') return norm;
+        }
+
+        return '#ffffff';
+      };
+
       const r1Values: any[] = [];
       worksheet.getRow(1).eachCell((c, n) => r1Values.push({ col: n, val: c.value }));
       addLog('info', 'SHEET_COLS', `Sheet "${sheetName}": rows=${worksheet.rowCount}, row1=${JSON.stringify(r1Values.slice(0, 8))}`);
 
-      // Multi-column layout detection: sheets often arrange songs in 2-column pairs (1&2, 3&4, 5&6, 7&8, ...)
+      // Multi-column layout detection for non-primary sheets; primary sheet uses columns A (ID) & B (Title)
       let colPairs: { colId: number; colTitle: number }[] = [];
-      worksheet.getRow(1).eachCell((cell, colNumber) => {
-        const val = String(cell.value || '').trim().toLowerCase();
-        if (['id', 'číslo', 'cislo', 'kód', 'kod', 'songid'].includes(val)) {
-          colPairs.push({ colId: colNumber, colTitle: colNumber + 1 });
-        }
-      });
+      if (isPrimarySheet && (worksheet.columnCount || 2) <= 3) {
+        colPairs = [{ colId: 1, colTitle: 2 }];
+      } else {
+        worksheet.getRow(1).eachCell((cell, colNumber) => {
+          const val = String(cell.value || '').trim().toLowerCase();
+          if (['id', 'číslo', 'cislo', 'kód', 'kod', 'songid'].includes(val)) {
+            colPairs.push({ colId: colNumber, colTitle: colNumber + 1 });
+          }
+        });
 
-      if (colPairs.length <= 1) {
-        colPairs = [];
-        const maxCol = Math.max(worksheet.columnCount || 10, 20);
-        for (let c = 1; c < maxCol; c += 2) {
-          colPairs.push({ colId: c, colTitle: c + 1 });
+        if (colPairs.length <= 1) {
+          colPairs = [];
+          const maxCol = Math.max(worksheet.columnCount || 2, 2);
+          for (let c = 1; c < maxCol; c += 2) {
+            colPairs.push({ colId: c, colTitle: c + 1 });
+          }
         }
       }
 
-      worksheet.eachRow((row, rowNumber) => {
+      let inLegendSection = false;
+      const totalRows = worksheet.rowCount || 0;
+
+      for (let rowNumber = 1; rowNumber <= totalRows; rowNumber++) {
+        const row = worksheet.getRow(rowNumber);
+
+        // Check for "Legenda:" section header anywhere in the first pair
+        const firstIdText = extractCellText(row.getCell(colPairs[0].colId));
+        const firstTitleText = extractCellText(row.getCell(colPairs[0].colTitle));
+        if (/^legenda\s*:?$/i.test(firstTitleText) || /^legenda\s*:?$/i.test(firstIdText)) {
+          inLegendSection = true;
+          continue;
+        }
+
+        if (inLegendSection) {
+          // Parse legend entries: color swatch is in colId (A), description is in colTitle (B)
+          if (!firstTitleText && !firstIdText) continue;
+          const label = firstTitleText || firstIdText;
+          const swatchCell = row.getCell(colPairs[0].colId);
+          const titleCell = row.getCell(colPairs[0].colTitle);
+          let swatchColor = resolveCellBgHex(swatchCell);
+          // If swatch cell wasn't colored, check if user colored the label cell instead
+          if (swatchColor === '#ffffff') {
+            const altColor = resolveCellBgHex(titleCell);
+            if (altColor !== '#ffffff') {
+              swatchColor = altColor;
+            }
+          }
+
+          const normalizedColor = normalizeHexColor(swatchColor, '#ffffff');
+          if (!seenLegendColors.has(normalizedColor)) {
+            seenLegendColors.add(normalizedColor);
+            legend.push({
+              bgColor: normalizedColor,
+              singer: normalizeLegendSingerName(label),
+              description: label,
+            });
+          }
+          continue;
+        }
+
         // Check all column pairs in this row
         for (const pair of colPairs) {
           const idCell = row.getCell(pair.colId);
           const titleCell = row.getCell(pair.colTitle);
 
           let idVal: number | undefined;
-          const rawId = idCell.value;
+          const rawId: any = idCell.value;
           if (typeof rawId === 'number' && !isNaN(rawId)) {
             idVal = Math.round(rawId);
-          } else if (rawId) {
-            const parsed = parseInt(String(rawId).trim(), 10);
-            if (!isNaN(parsed) && parsed >= 0 && parsed <= 5000) idVal = parsed;
+          } else if (rawId !== null && rawId !== undefined) {
+            const idStr = extractCellText(idCell);
+            if (/^\d{1,4}$/.test(idStr)) {
+              const parsed = parseInt(idStr, 10);
+              if (!isNaN(parsed) && parsed >= 0 && parsed <= 5000) idVal = parsed;
+            }
           }
 
-          let pdfTitle = '';
-          if (titleCell.value) {
-            const tv: any = titleCell.value;
-            pdfTitle = typeof tv === 'object' && tv.richText
-              ? tv.richText.map((p: any) => p.text).join('')
-              : String(tv.text || tv).trim();
-          }
+          const pdfTitle = extractCellText(titleCell);
 
-          // If no title in titleCell, but idCell has text or vice versa
           if (!pdfTitle && idVal === undefined) {
             continue;
           }
@@ -354,56 +484,35 @@ export async function parseXlsxWithExcelJs(buffer: ArrayBuffer): Promise<any[]> 
           if (idVal === undefined && typeof titleCell.value === 'number') {
             idVal = Math.round(titleCell.value);
             numberCell = titleCell;
-          } else if (idVal === undefined && titleCell.value) {
-            const parsed = parseInt(String(titleCell.value).trim(), 10);
-            if (!isNaN(parsed) && parsed >= 0 && parsed <= 5000) {
-              idVal = parsed;
-              numberCell = titleCell;
-            }
           }
 
-          // Filter out color legend notes (e.g. "Nběžně se nehraje", "Zpívá Karel", "Duet")
-          if (pdfTitle && /^(nběžně|zpívá\s+|duet\b)/i.test(pdfTitle)) {
+          // Guard against legend rows placed without a "Legenda:" header
+          if (
+            idVal === undefined &&
+            pdfTitle &&
+            /^(legenda\b|n?běžně|instrument[aá]lk|lidovk|zp[ií]v[aá]\s+|duet\b)/i.test(pdfTitle)
+          ) {
+            const swatchColor = normalizeHexColor(resolveCellBgHex(idCell), '#ffffff');
+            if (!seenLegendColors.has(swatchColor)) {
+              seenLegendColors.add(swatchColor);
+              legend.push({
+                bgColor: swatchColor,
+                singer: normalizeLegendSingerName(pdfTitle),
+                description: pdfTitle,
+              });
+            }
             continue;
           }
 
-          // ZÁSADNÍ PRAVIDLO: Barvu skladby určuje barva výplně u ČÍSLA (numberCell),
+          // ZÁSADNÍ PRAVIDLO: Barvu skladby určuje VÝHRADNĚ barva výplně u ČÍSLA (numberCell),
           // NIKOLIV barva pod názvem skladby (titleCell)!
-          let bgColor: string | undefined;
+          let bgColor = resolveCellBgHex(numberCell);
 
-          const extractCellBg = (cell: ExcelJS.Cell) => {
-            if (bgColor) return;
-            if (cell.fill && typeof cell.fill === 'object') {
-              const fill: any = cell.fill;
-              const fg = fill.fgColor;
-              if (fg?.argb && typeof fg.argb === 'string') {
-                let hex = fg.argb;
-                if (hex.length === 8) hex = hex.substring(2);
-                if (/^[0-9a-fA-F]{6}$/.test(hex) && hex.toLowerCase() !== 'ffffff' && hex.toLowerCase() !== '000000') {
-                  bgColor = `#${hex.toLowerCase()}`;
-                  return;
-                }
-              }
-              const bg = fill.bgColor;
-              if (!bgColor && bg?.argb && typeof bg.argb === 'string') {
-                let hex = bg.argb;
-                if (hex.length === 8) hex = hex.substring(2);
-                if (/^[0-9a-fA-F]{6}$/.test(hex) && hex.toLowerCase() !== 'ffffff' && hex.toLowerCase() !== '000000') {
-                  bgColor = `#${hex.toLowerCase()}`;
-                  return;
-                }
-              }
-            }
-          };
-
-          // Barvu extrahujeme VÝHRADNĚ z buňky s číslem skladby, NIKOLIV pod názvem skladby!
-          extractCellBg(numberCell);
-
-          if (!bgColor && sheetName.toLowerCase().includes('lidovk')) {
+          if (bgColor === '#ffffff' && sheetName.toLowerCase().includes('lidovk')) {
             bgColor = '#ffffcc';
           }
 
-          const finalBgColor = bgColor || '#ffffff';
+          const finalBgColor = normalizeHexColor(bgColor, '#ffffff');
           const finalTextColor = '#000000'; // Purely black text, colored solely by cell background
 
           if (idVal !== undefined) {
@@ -420,20 +529,29 @@ export async function parseXlsxWithExcelJs(buffer: ArrayBuffer): Promise<any[]> 
             textColor: finalTextColor,
             bgColor: finalBgColor,
             category: sheetName || undefined,
+            isPrimarySheet,
           });
         }
-      });
+      }
     }
 
     if (items.length > 0) {
-      return items;
+      return { items, legend };
     }
   } catch (excelErr) {
     console.warn('ExcelJS parsing fallback to OpenXML:', excelErr);
   }
 
   // Fallback to our OpenXML styles parser
-  return await parseXlsx(buffer);
+  return await parseXlsxWithLegend(buffer);
+}
+
+/**
+ * Backward-compatible wrapper returning parsed XLSX song rows
+ */
+export async function parseXlsxWithExcelJs(buffer: ArrayBuffer): Promise<any[]> {
+  const { items } = await parseXlsxWithExcelJsAndLegend(buffer);
+  return items;
 }
 
 /**
@@ -616,6 +734,7 @@ export async function testDriveConnection(): Promise<{
 
   return {
     authOk: true,
+    authMode,
     clientEmail,
     projectId,
     apiEnabled,
@@ -644,13 +763,14 @@ export async function testDriveConnection(): Promise<{
 }
 
 /**
- * Synchronizes repertoire from Google Drive (PEPETO_KOMPLET_SETLIST.mss + PEPETA_KOMPLET.xlsx)
+ * Synchronizes repertoire from Google Drive (.mss + .xlsx with legend)
  */
 export async function syncMasterSongsFromDrive(forceRefresh = false): Promise<{
   success: boolean;
   count: number;
   songs: Song[];
   dbSongs?: Song[];
+  singerLegend?: PepetoSingerLegendItem[];
   syncedAt: number;
   source: 'google-drive' | 'cached' | 'fallback';
   message?: string;
@@ -662,6 +782,7 @@ export async function syncMasterSongsFromDrive(forceRefresh = false): Promise<{
       count: cachedSongs.length,
       songs: cachedSongs,
       dbSongs: cachedDbSongs.length > 0 ? cachedDbSongs : undefined,
+      singerLegend: cachedLegend.length > 0 ? cachedLegend : undefined,
       syncedAt: lastSyncedAt,
       source: 'cached',
     };
@@ -760,35 +881,47 @@ export async function syncMasterSongsFromDrive(forceRefresh = false): Promise<{
       }
     }
 
-    // 4. Parse MSS (XML) and XLSX (ExcelJS with colors)
+    // 4. Parse MSS (XML) and XLSX (ExcelJS + OpenXML with colors & dynamic legend)
     const mssText = new TextDecoder('utf-8').decode(mssBuffer);
     const parsedMss = parseMssXml(mssText);
-    const parsedXlsx = await parseXlsxWithExcelJs(xlsxBuffer);
+    const { items: parsedXlsx, legend: parsedLegend } = await parseXlsxWithExcelJsAndLegend(xlsxBuffer);
 
     lastParsedXlsx = parsedXlsx;
+    lastParsedLegend = parsedLegend;
     const coloredInXlsx = parsedXlsx.filter((x) => x.bgColor && x.bgColor !== '#ffffff');
-    addLog('info', 'XLSX_STATS', `XLSX celkem řádků: ${parsedXlsx.length}, obarvených: ${coloredInXlsx.length}`);
+    addLog('info', 'XLSX_STATS', `XLSX celkem skladeb: ${parsedXlsx.length}, obarvených: ${coloredInXlsx.length}, bílé: ${parsedXlsx.length - coloredInXlsx.length}`);
+    if (parsedLegend.length > 0) {
+      addLog(
+        'info',
+        'XLSX_LEGEND',
+        `Načtena legenda z Excelu (${parsedLegend.length} barev): ${parsedLegend.map((l) => `${l.bgColor}=${l.singer}`).join(', ')}`
+      );
+    }
 
-    // 5. Pair them
-    const paired = pairMssAndXlsx(parsedMss, parsedXlsx);
+    // 5. Pair them using authoritative colors & parsed legend from Excel
+    const paired = pairMssAndXlsx(parsedMss, parsedXlsx, parsedLegend);
 
     if (paired.length === 0) {
       throw new Error('Při parsování souborů .mss a .xlsx nebyly nalezeny žádné skladby.');
     }
 
     cachedSongs = paired;
+    if (parsedLegend.length > 0) {
+      cachedLegend = parsedLegend;
+    }
     if (driveDbSongs.length > 0) {
       cachedDbSongs = driveDbSongs;
     }
     lastSyncedAt = Date.now();
 
-    addLog('success', 'SYNC_SUCCESS', `Úspěšně spárováno a načteno ${paired.length} skladeb z Google Disku přes ExcelJS!`);
+    addLog('success', 'SYNC_SUCCESS', `Úspěšně spárováno a načteno ${paired.length} skladeb z Google Disku (${parsedLegend.length} barev v legendě)!`);
 
     return {
       success: true,
       count: paired.length,
       songs: paired,
       dbSongs: driveDbSongs.length > 0 ? driveDbSongs : undefined,
+      singerLegend: parsedLegend.length > 0 ? parsedLegend : undefined,
       syncedAt: lastSyncedAt,
       source: 'google-drive',
       message: `Úspěšně synchronizováno ${paired.length} skladeb z Google Disku.`,
@@ -801,6 +934,7 @@ export async function syncMasterSongsFromDrive(forceRefresh = false): Promise<{
         count: cachedSongs.length,
         songs: cachedSongs,
         dbSongs: cachedDbSongs.length > 0 ? cachedDbSongs : undefined,
+        singerLegend: cachedLegend.length > 0 ? cachedLegend : undefined,
         syncedAt: lastSyncedAt || Date.now(),
         source: 'cached',
         message: `Synchronizace selhala (${err.message}), použita stávající cache (${cachedSongs.length} skladeb).`,

@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { Search, X, Check, AlertTriangle, Link2 } from 'lucide-react';
 import { Song } from '../types';
 import { cleanTitleForPdf } from '../services/exportGenerator';
@@ -18,17 +18,23 @@ export const ManualPairModal: React.FC<ManualPairModalProps> = ({
   masterSongs,
   onPairSong,
 }) => {
-  if (!isOpen || !unmatchedSong) return null;
+  const originalTitle = unmatchedSong
+    ? unmatchedSong.originalImportTitle || unmatchedSong.pdf_title
+    : '';
 
-  const originalTitle = unmatchedSong.originalImportTitle || unmatchedSong.pdf_title;
-  // Initialize search with cleaned title
-  const initialSearch = originalTitle
-    .replace(/^\d+[\s\.\-_:]+/, '')
-    .replace(/[-_–—/]?\s*(?:alt|tenor|alto)?\s*sax\w*/gi, '')
-    .trim();
-
-  const [query, setQuery] = useState(initialSearch);
+  const [query, setQuery] = useState('');
   const [selectedMasterId, setSelectedMasterId] = useState<number | null>(null);
+
+  useEffect(() => {
+    if (!isOpen || !unmatchedSong) return;
+    const raw = unmatchedSong.originalImportTitle || unmatchedSong.pdf_title || '';
+    const cleaned = raw
+      .replace(/^\d+[\s\.\-_:]+/, '')
+      .replace(/[-_–—/]?\s*(?:alt|tenor|alto)?\s*sax\w*/gi, '')
+      .trim();
+    setQuery(cleaned);
+    setSelectedMasterId(null);
+  }, [isOpen, unmatchedSong]);
 
   const filteredMasterSongs = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -43,6 +49,8 @@ export const ManualPairModal: React.FC<ManualPairModalProps> = ({
       })
       .slice(0, 50);
   }, [masterSongs, query]);
+
+  if (!isOpen || !unmatchedSong) return null;
 
   const handleConfirm = () => {
     if (selectedMasterId !== null) {

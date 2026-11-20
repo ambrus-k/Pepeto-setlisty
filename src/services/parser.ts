@@ -1,20 +1,107 @@
 import * as XLSX from 'xlsx';
 import { DOMParser as XmlDomParser } from '@xmldom/xmldom';
-import type { Song } from '../types/index.ts';
-import { parseExcelAllStyles, type CellStyleInfo } from './excelStyleParser.ts';
+import type { PepetoSingerLegendItem, Song } from '../types/index.ts';
+import { parseExcelAllStyles } from './excelStyleParser.ts';
 
-interface ParsedMssItem {
+export interface ParsedMssItem {
   id: number;
+  mss_songId: number | null;
   mss_title: string;
+  fileName?: string;
+  fileType?: number;
 }
 
-interface ParsedXlsxItem {
+export interface ParsedXlsxItem {
   id?: number;
   pdf_title?: string;
   textColor?: string;
   bgColor?: string;
   category?: string;
+  isPrimarySheet?: boolean;
   raw?: any;
+}
+
+const GENERIC_SHEET_CATEGORY_RE = /^(seznam\b|list\s*\d+|sheet\s*\d+)/i;
+
+/**
+ * Strips leading "Zpívá " prefix from Czech Excel legend descriptions while keeping
+ * categories like "Instrumentálky", "Lidovky", "Duet" intact.
+ */
+export function normalizeLegendSingerName(rawLabel: string): string {
+  const cleaned = String(rawLabel || '').trim().replace(/\s+/g, ' ');
+  if (!cleaned) return 'Neurčeno';
+  const stripped = cleaned.replace(/^zp[ií]v[aá]\s+/i, '').trim();
+  return stripped || cleaned;
+}
+
+/**
+ * Detects whether a legend description explicitly means "not commonly played / unassigned".
+ */
+export function isNotCommonlyPlayedLabel(label?: string | null): boolean {
+  if (!label) return false;
+  return /(n?běžně\s+se\s+nehraj|nehraje\s+se|neurčeno|rezervn[ií]|archiv)/i.test(label);
+}
+
+/**
+ * Extracts normalized saxophone tag from a song title (e.g. "ALT Sax", "TENOR Sax").
+ */
+export function extractSaxTag(title?: string | null): string | null {
+  if (!title) return null;
+  if (/(?:^|[\s\-–—_/])(?:alt|alto)\s*sax\b|[\-_]alt\b/i.test(title)) return 'ALT Sax';
+  if (/(?:^|[\s\-–—_/])tenor\s*sax\b|[\-_]tenor\b/i.test(title)) return 'TENOR Sax';
+  if (/(?:^|[\s\-–—_/])sopr[aá]n\s*sax\b/i.test(title)) return 'SOPRÁN Sax';
+  if (/(?:^|[\s\-–—_/])bar[yi]ton\s*sax\b/i.test(title)) return 'BARYTON Sax';
+  return null;
+}
+
+function hexToRgbTuple(hex: string): [number, number, number] | null {
+  const clean = hex.replace(/^#/, '').trim();
+  if (!/^[0-9a-fA-F]{6}$/.test(clean)) return null;
+  return [
+    parseInt(clean.slice(0, 2), 16),
+    parseInt(clean.slice(2, 4), 16),
+    parseInt(clean.slice(4, 6), 16),
+  ];
+}
+
+/**
+ * Matches a cell background hex color against the Excel legend (exact match first,
+ * then small RGB distance fallback for minor Excel theme/tint rounding).
+ */
+export function matchColorToLegend(
+  bgColor: string | undefined | null,
+  legend?: PepetoSingerLegendItem[] | null
+): PepetoSingerLegendItem | undefined {
+  if (!legend || legend.length === 0) return undefined;
+  const normalized = normalizeHexColor(bgColor, '#ffffff').toLowerCase();
+
+  const exact = legend.find(
+    (entry) => normalizeHexColor(entry.bgColor, '#ffffff').toLowerCase() === normalized
+  );
+  if (exact) return exact;
+
+  const targetRgb = hexToRgbTuple(normalized);
+  if (!targetRgb) return undefined;
+
+  let bestEntry: PepetoSingerLegendItem | undefined;
+  let bestDist = Infinity;
+
+  for (const entry of legend) {
+    const entryHex = normalizeHexColor(entry.bgColor, '#ffffff').toLowerCase();
+    const rgb = hexToRgbTuple(entryHex);
+    if (!rgb) continue;
+    const dist = Math.hypot(
+      targetRgb[0] - rgb[0],
+      targetRgb[1] - rgb[1],
+      targetRgb[2] - rgb[2]
+    );
+    if (dist < bestDist) {
+      bestDist = dist;
+      bestEntry = entry;
+    }
+  }
+
+  return bestDist <= 28 ? bestEntry : undefined;
 }
 
 /**
@@ -52,10 +139,15 @@ function getDOMParser(): any {
 }
 
 /**
- * Parse .mss XML file
+ * Parse .mss XML file (preserving songs even when <SongId> is omitted in MobileSheets)
  */
 export function parseMssXml(xmlText: string): ParsedMssItem[] {
-  const songs: ParsedMssItem[] = [];
+  const rawEntries: Array<{
+    explicitId: number | null;
+    title: string;
+    fileName?: string;
+    fileType?: number;
+  }> = [];
 
   try {
     const parser = getDOMParser();
@@ -66,15 +158,24 @@ export function parseMssXml(xmlText: string): ParsedMssItem[] {
       const songNode = songNodes[i];
       const titleEl = songNode.getElementsByTagName('Title')[0];
       const songIdEl = songNode.getElementsByTagName('SongId')[0];
+      const fileNameEl = songNode.getElementsByTagName('FileName')[0];
+      const fileTypeEl = songNode.getElementsByTagName('FileType')[0];
 
       const title = titleEl?.textContent?.trim() || '';
       const idStr = songIdEl?.textContent?.trim() || '';
-      const id = parseInt(idStr, 10);
+      const parsedId = idStr ? parseInt(idStr, 10) : NaN;
+      const fileName = fileNameEl?.textContent ?? undefined;
+      const parsedFileType = fileTypeEl?.textContent?.trim()
+        ? parseInt(fileTypeEl.textContent.trim(), 10)
+        : undefined;
 
-      if (!isNaN(id) && title) {
-        if (!songs.some((s) => s.id === id)) {
-          songs.push({ id, mss_title: title });
-        }
+      if (title) {
+        rawEntries.push({
+          explicitId: !isNaN(parsedId) ? parsedId : null,
+          title,
+          fileName: fileName && fileName.length > 0 ? fileName : undefined,
+          fileType: parsedFileType !== undefined && !isNaN(parsedFileType) ? parsedFileType : undefined,
+        });
       }
     }
   } catch (err) {
@@ -82,20 +183,72 @@ export function parseMssXml(xmlText: string): ParsedMssItem[] {
   }
 
   // Regex fallback if DOMParser produced 0 items or failed
-  if (songs.length === 0) {
+  if (rawEntries.length === 0) {
     const songRegex = /<Song>([\s\S]*?)<\/Song>/gi;
     let match: RegExpExecArray | null;
     while ((match = songRegex.exec(xmlText)) !== null) {
       const inner = match[1];
       const titleMatch = inner.match(/<Title>([\s\S]*?)<\/Title>/i);
       const idMatch = inner.match(/<SongId>([\s\S]*?)<\/SongId>/i);
-      if (titleMatch && idMatch) {
+      const fileNameMatch = inner.match(/<FileName>([\s\S]*?)<\/FileName>/i);
+      const fileTypeMatch = inner.match(/<FileType>([\s\S]*?)<\/FileType>/i);
+
+      if (titleMatch) {
         const title = titleMatch[1].trim();
-        const id = parseInt(idMatch[1].trim(), 10);
-        if (!isNaN(id) && title && !songs.some((s) => s.id === id)) {
-          songs.push({ id, mss_title: title });
+        const parsedId = idMatch ? parseInt(idMatch[1].trim(), 10) : NaN;
+        const parsedFileType = fileTypeMatch ? parseInt(fileTypeMatch[1].trim(), 10) : undefined;
+        if (title) {
+          rawEntries.push({
+            explicitId: !isNaN(parsedId) ? parsedId : null,
+            title,
+            fileName: fileNameMatch?.[1] || undefined,
+            fileType: parsedFileType !== undefined && !isNaN(parsedFileType) ? parsedFileType : undefined,
+          });
         }
       }
+    }
+  }
+
+  // Reserve all explicit <SongId> values first so fallback IDs never collide
+  const usedIds = new Set<number>();
+  for (const entry of rawEntries) {
+    if (entry.explicitId !== null) {
+      usedIds.add(entry.explicitId);
+    }
+  }
+
+  const songs: ParsedMssItem[] = [];
+  const emittedIds = new Set<number>();
+  let nextFallbackId = 1001;
+
+  for (const entry of rawEntries) {
+    let resolvedId: number;
+    if (entry.explicitId !== null) {
+      resolvedId = entry.explicitId;
+    } else {
+      // Try extracting leading catalog number from title (e.g. "216 My Way" -> 216)
+      const prefixMatch = entry.title.match(/^0*(\d{1,4})\s+/);
+      const prefixNum = prefixMatch ? parseInt(prefixMatch[1], 10) : NaN;
+      if (!isNaN(prefixNum) && prefixNum > 0 && !usedIds.has(prefixNum)) {
+        resolvedId = prefixNum;
+      } else {
+        while (usedIds.has(nextFallbackId)) {
+          nextFallbackId++;
+        }
+        resolvedId = nextFallbackId++;
+      }
+      usedIds.add(resolvedId);
+    }
+
+    if (!emittedIds.has(resolvedId)) {
+      emittedIds.add(resolvedId);
+      songs.push({
+        id: resolvedId,
+        mss_songId: entry.explicitId,
+        mss_title: entry.title,
+        fileName: entry.fileName,
+        fileType: entry.fileType,
+      });
     }
   }
 
@@ -103,9 +256,13 @@ export function parseMssXml(xmlText: string): ParsedMssItem[] {
 }
 
 /**
- * Parse .xlsx Excel file with authentic OpenXML cell styles and background/font colors
+ * Parse .xlsx Excel file with authentic OpenXML cell styles, background colors (strictly under song number),
+ * and color legend defined below the song list.
  */
-export async function parseXlsx(buffer: ArrayBuffer): Promise<ParsedXlsxItem[]> {
+export async function parseXlsxWithLegend(buffer: ArrayBuffer): Promise<{
+  items: ParsedXlsxItem[];
+  legend: PepetoSingerLegendItem[];
+}> {
   // 1. Extract authentic cell styles from .xlsx ZIP archive
   let stylesInfo: Awaited<ReturnType<typeof parseExcelAllStyles>> | null = null;
   try {
@@ -120,13 +277,23 @@ export async function parseXlsx(buffer: ArrayBuffer): Promise<ParsedXlsxItem[]> 
   });
 
   const items: ParsedXlsxItem[] = [];
+  const legend: PepetoSingerLegendItem[] = [];
   const seenIds = new Set<number>();
+  const seenLegendColors = new Set<string>();
 
-  for (let sheetIdx = 0; sheetIdx < workbook.SheetNames.length; sheetIdx++) {
-    const sheetName = workbook.SheetNames[sheetIdx];
+  const hasPrimarySheet = workbook.SheetNames.some((n) => n.toLowerCase().includes('vybarven'));
+  const sheetsToRead = workbook.SheetNames.map((name, idx) => ({ name, idx }))
+    .filter(({ name }) => {
+      if (/odstran|vyškrt/i.test(name)) return false;
+      if (hasPrimarySheet) return name.toLowerCase().includes('vybarven');
+      return true;
+    });
+
+  for (const { name: sheetName, idx: sheetIdx } of sheetsToRead) {
     const worksheet = workbook.Sheets[sheetName];
     if (!worksheet) continue;
 
+    const isPrimarySheet = sheetName.toLowerCase().includes('vybarven');
     const sheetStyle =
       stylesInfo?.sheets.get(sheetName) || stylesInfo?.sheetByIndex.get(sheetIdx);
 
@@ -184,20 +351,42 @@ export async function parseXlsx(buffer: ArrayBuffer): Promise<ParsedXlsxItem[]> 
     if (colTitleIdx === -1) colTitleIdx = 1; // Col B
 
     const startRow = headerRowIdx !== -1 ? headerRowIdx + 1 : range.s.r;
+    let inLegendSection = false;
 
     for (let r = startRow; r <= range.e.r; r++) {
-      const excelRowNum = r + 1; // 1-based row number
-      const rowStyle = sheetStyle?.rowColors.get(excelRowNum);
+      const idAddr = XLSX.utils.encode_cell({ r, c: colIdIdx });
+      const titleAddr = XLSX.utils.encode_cell({ r, c: colTitleIdx });
+      const idVal = worksheet[idAddr]?.v;
+      const rawTitle = worksheet[titleAddr]?.v;
+      const titleStr = rawTitle !== undefined && rawTitle !== null ? String(rawTitle).trim() : '';
+
+      // Detect "Legenda:" header below the song list
+      if (/^legenda\s*:?$/i.test(titleStr) || /^legenda\s*:?$/i.test(String(idVal || '').trim())) {
+        inLegendSection = true;
+        continue;
+      }
+
+      if (inLegendSection) {
+        if (!titleStr) continue;
+        const swatchStyle = sheetStyle?.cellColors.get(idAddr);
+        const bgColor = normalizeHexColor(swatchStyle?.bgColor, '#ffffff');
+        if (!seenLegendColors.has(bgColor)) {
+          seenLegendColors.add(bgColor);
+          legend.push({
+            bgColor,
+            singer: normalizeLegendSingerName(titleStr),
+            description: titleStr,
+          });
+        }
+        continue;
+      }
 
       // 1. Resolve Song ID
       let songId: number | undefined;
 
-      // Try designated ID column
-      const idAddr = XLSX.utils.encode_cell({ r, c: colIdIdx });
-      const idVal = worksheet[idAddr]?.v;
       if (typeof idVal === 'number' && Number.isInteger(idVal)) {
         songId = idVal;
-      } else if (idVal) {
+      } else if (idVal !== undefined && idVal !== null && String(idVal).trim() !== '') {
         const parsed = parseInt(String(idVal).trim(), 10);
         if (!isNaN(parsed) && parsed >= 0) {
           songId = parsed;
@@ -218,12 +407,7 @@ export async function parseXlsx(buffer: ArrayBuffer): Promise<ParsedXlsxItem[]> 
       }
 
       // 2. Resolve PDF Title (visual name with sax notes, etc.)
-      let pdfTitle = '';
-      const titleAddr = XLSX.utils.encode_cell({ r, c: colTitleIdx });
-      const rawTitle = worksheet[titleAddr]?.v;
-      if (rawTitle) {
-        pdfTitle = String(rawTitle).trim();
-      }
+      let pdfTitle = titleStr;
 
       // If still empty, scan row for non-numeric text
       if (!pdfTitle) {
@@ -243,11 +427,28 @@ export async function parseXlsx(buffer: ArrayBuffer): Promise<ParsedXlsxItem[]> 
         continue;
       }
 
-      // 3. Resolve Colors: Check cell styles from OpenXML
+      // Guard: rows without a song ID matching legend labels should be treated as legend, never as songs
+      if (
+        songId === undefined &&
+        /^(legenda\b|n?běžně|instrument[aá]lk|lidovk|zp[ií]v[aá]\s+|duet\b)/i.test(pdfTitle)
+      ) {
+        const swatchStyle = sheetStyle?.cellColors.get(idAddr);
+        const bgColor = normalizeHexColor(swatchStyle?.bgColor, '#ffffff');
+        if (!seenLegendColors.has(bgColor)) {
+          seenLegendColors.add(bgColor);
+          legend.push({
+            bgColor,
+            singer: normalizeLegendSingerName(pdfTitle),
+            description: pdfTitle,
+          });
+        }
+        continue;
+      }
+
+      // 3. Resolve Colors: Strictly from the cell under the song number (colIdIdx)
       let detectedBgColor: string | undefined;
       let detectedTextColor: string | undefined;
 
-      // Check explicit color columns if present
       if (colTextColorIdx !== -1) {
         const addr = XLSX.utils.encode_cell({ r, c: colTextColorIdx });
         const val = worksheet[addr]?.v;
@@ -260,7 +461,7 @@ export async function parseXlsx(buffer: ArrayBuffer): Promise<ParsedXlsxItem[]> 
       }
 
       // Barvu skladby určuje VÝHRADNĚ barva výplně u čísla (idCellStyle), NIKOLIV pod názvem skladby!
-      const idCellStyle = sheetStyle?.cellColors.get(XLSX.utils.encode_cell({ r, c: colIdIdx }));
+      const idCellStyle = sheetStyle?.cellColors.get(idAddr);
       if (idCellStyle?.bgColor && idCellStyle.bgColor !== '#ffffff') {
         detectedBgColor = idCellStyle.bgColor;
       }
@@ -268,14 +469,8 @@ export async function parseXlsx(buffer: ArrayBuffer): Promise<ParsedXlsxItem[]> 
         detectedTextColor = idCellStyle.textColor;
       }
 
-      // E) Sheet tab color fallback
-      if ((!detectedBgColor || detectedBgColor === '#ffffff') && sheetStyle?.tabColor) {
-        detectedBgColor = sheetStyle.tabColor;
-      }
-
-      // F) Lidovky sheet fallback (standard yellow #fff2cc as in PDF template)
       if ((!detectedBgColor || detectedBgColor === '#ffffff') && sheetName.toLowerCase().includes('lidovk')) {
-        detectedBgColor = '#fff2cc';
+        detectedBgColor = '#ffffcc';
       }
 
       // 4. Resolve Category
@@ -288,7 +483,6 @@ export async function parseXlsx(buffer: ArrayBuffer): Promise<ParsedXlsxItem[]> 
         category = sheetName;
       }
 
-      // Final normalized colors
       const finalBgColor = normalizeHexColor(detectedBgColor, '#ffffff');
       const finalTextColor = normalizeHexColor(detectedTextColor, '#000000');
 
@@ -301,6 +495,7 @@ export async function parseXlsx(buffer: ArrayBuffer): Promise<ParsedXlsxItem[]> 
             textColor: finalTextColor,
             bgColor: finalBgColor,
             category,
+            isPrimarySheet,
           });
         }
       } else if (pdfTitle) {
@@ -310,11 +505,17 @@ export async function parseXlsx(buffer: ArrayBuffer): Promise<ParsedXlsxItem[]> 
           textColor: finalTextColor,
           bgColor: finalBgColor,
           category,
+          isPrimarySheet,
         });
       }
     }
   }
 
+  return { items, legend };
+}
+
+export async function parseXlsx(buffer: ArrayBuffer): Promise<ParsedXlsxItem[]> {
+  const { items } = await parseXlsxWithLegend(buffer);
   return items;
 }
 
@@ -465,16 +666,20 @@ export function extractTitleVariants(rawTitle: string): string[] {
 }
 
 /**
- * Pairs songs from MSS (ID + clean Title) with XLSX (ID + visual PDF title + colors).
+ * Pairs songs from MSS (ID + clean Title) with XLSX (ID + visual PDF title + colors + legend).
  * Rules:
- * - MSS (Pepeto_Complete_Setlist.mss) is the authoritative baseline for song names and IDs.
- * - XLSX (Seznam_not_Peppeta_Complete.xlsx) is used to determine colors from the number cell.
- * - Names in XLSX serve only for comparison to ensure correct color pairing.
+ * - MSS (Pepeto komplet setlist.mss) is the authoritative baseline for song names and IDs.
+ * - XLSX ("Seznam - vybarvený") is authoritative for song background colors (from the number cell)
+ *   and color legend (below the song list).
  * - Fuzzy matching checks both the full string and isolated song segments for dashed titles.
- * - MobileSheets compatibility: MSS title is strictly authoritative and maintained for song names.
+ * - MobileSheets compatibility: MSS title and fileName are strictly preserved.
  * - Text color is always high-contrast #000000; only cell background colors are applied.
  */
-export function pairMssAndXlsx(mssList: ParsedMssItem[], xlsxList: ParsedXlsxItem[]): Song[] {
+export function pairMssAndXlsx(
+  mssList: ParsedMssItem[],
+  xlsxList: ParsedXlsxItem[],
+  singerLegend?: PepetoSingerLegendItem[]
+): Song[] {
   const result: Song[] = [];
 
   // Pre-clean all XLSX items with their full and isolated title variants
@@ -482,7 +687,9 @@ export function pairMssAndXlsx(mssList: ParsedMssItem[], xlsxList: ParsedXlsxIte
     const rawTitle = item.pdf_title || '';
     const cleanTitle = cleanSongTitle(rawTitle);
     const titleVariants = extractTitleVariants(rawTitle);
-    const isVybarveny = item.category ? item.category.toLowerCase().includes('vybarven') : false;
+    const isVybarveny = Boolean(
+      item.isPrimarySheet || (item.category && item.category.toLowerCase().includes('vybarven'))
+    );
     const hasColor = Boolean(
       item.bgColor &&
       item.bgColor.toLowerCase() !== '#ffffff' &&
@@ -535,20 +742,29 @@ export function pairMssAndXlsx(mssList: ParsedMssItem[], xlsxList: ParsedXlsxIte
       }
 
       if (idMatches) {
-        // If ID matches, verify that titles do not radically contradict each other
-        // (Prevents collisions like song 2 "The Last Waltz" matching local lidovky 2 "Škoda lásky")
-        const isKnownEquivalent = mss.id === 120 || mss.id === 145 || mss.id === 311;
-        if (titleSim >= 0.20 || isKnownEquivalent) {
-          score = 1.0 + titleSim; // Strong ID + Title agreement
+        if (cand.isVybarveny) {
+          // On the primary authoritative colored sheet ("Seznam - vybarvený"), song numbers are unique
+          // and directly correspond to the catalog numbers (including CZ/EN translations like
+          // #120 Something Stupid/Sladké hlouposti, #295 Dlouhá bílá noc/Strangers in the Night,
+          // #296 Where Do I Begin/Love Story).
+          score = 2.0 + titleSim;
         } else {
-          score = 0; // REJECT collision! Different songs with accidental same local numbering
+          // Secondary sheets can have local numbering collisions (e.g. Lidovky 2 vs song 2),
+          // so require title agreement there.
+          const isKnownEquivalent =
+            mss.id === 120 || mss.id === 145 || mss.id === 295 || mss.id === 296 || mss.id === 311;
+          if (titleSim >= 0.20 || isKnownEquivalent) {
+            score = 1.0 + titleSim;
+          } else {
+            score = 0;
+          }
         }
       } else if (titleSim >= 0.70) {
-        // High title similarity match without exact ID
+        // High title similarity match without exact ID (e.g. MSS #135 "136 Kdybych já byl kovářem" <-> Excel #136)
         score = titleSim;
       }
 
-      // Strong priority boost for the official colored sheet "Seznam - vybarvený"
+      // Priority boost for the official colored sheet "Seznam - vybarvený"
       if (cand.isVybarveny && score > 0) {
         score += 0.50;
       }
@@ -559,16 +775,18 @@ export function pairMssAndXlsx(mssList: ParsedMssItem[], xlsxList: ParsedXlsxIte
       }
     }
 
-    // Determine final background color:
-    // Barvu skladby určuje barva výplně buňky s číslem v XLSX!
+    // Determine final background color strictly from the matched Excel number cell
     let finalBgColor = '#ffffff';
-    let finalCategory = undefined;
+    let finalCategory: string | undefined = undefined;
 
     if (bestCandidate && highestScore >= 0.50) {
       if (bestCandidate.bgColor && bestCandidate.bgColor.toLowerCase() !== '#ffffff') {
         finalBgColor = normalizeHexColor(bestCandidate.bgColor, '#ffffff');
       }
-      finalCategory = bestCandidate.category;
+      // Do not overwrite musical category with generic Excel sheet names like "Seznam - vybarvený"
+      if (bestCandidate.category && !GENERIC_SHEET_CATEGORY_RE.test(bestCandidate.category.trim())) {
+        finalCategory = bestCandidate.category;
+      }
     }
 
     // Fallback: Czech lidovky (500-series 501..528 and 550) are yellow #ffffcc
@@ -583,19 +801,36 @@ export function pairMssAndXlsx(mssList: ParsedMssItem[], xlsxList: ParsedXlsxIte
       }
     }
 
-    // ZÁSADNÍ PRAVIDLO: Názvy musí být VŽDY podle souboru MSS, aby komunikovaly
-    // s aplikací MobileSheets, kde jsou pod těmito názvy uloženy písničky, jinak by setlist nefungoval.
-    // Barvy musí být vždy podle Excelu podle porovnání názvů.
     const authoritativeMssTitle = mss.mss_title;
     const authoritativePdfTitle = bestCandidate?.pdfTitle || authoritativeMssTitle;
+    const isUtility =
+      /^0+\s+seznam$/i.test(authoritativeMssTitle.trim()) ||
+      mss.id === 998 ||
+      mss.id === 999;
+
+    const legendMatch = !isUtility ? matchColorToLegend(finalBgColor, singerLegend) : undefined;
+    const detectedSax = extractSaxTag(authoritativePdfTitle) || extractSaxTag(authoritativeMssTitle);
 
     result.push({
       id: mss.id,
+      mss_songId: mss.mss_songId,
       mss_title: authoritativeMssTitle,
+      mss_fileName: mss.fileName || `${authoritativeMssTitle}.pdf`,
+      fileName: mss.fileName || `${authoritativeMssTitle}.pdf`,
+      fileType: mss.fileType !== undefined ? mss.fileType : 1,
       pdf_title: authoritativePdfTitle,
       textColor: '#000000', // Vždy vysoce kontrastní černá
       bgColor: finalBgColor,
       category: finalCategory,
+      isPlayableSong: !isUtility,
+      pepeto: legendMatch
+        ? {
+            singer: legendMatch.singer,
+            bgColor: finalBgColor,
+            isCommonlyPlayed: !isNotCommonlyPlayedLabel(legendMatch.description || legendMatch.singer),
+            sax: detectedSax,
+          }
+        : undefined,
     });
   }
 

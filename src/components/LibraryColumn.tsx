@@ -99,7 +99,7 @@ function isFilmSong(song: Song): boolean {
 function isLidovkaSong(song: Song): boolean {
   const cat = (song.category || '').toLowerCase();
   const singer = (song.pepeto?.singer || '').toLowerCase();
-  return cat.includes('lidovk') || singer === 'lidovka';
+  return cat.includes('lidovk') || singer.includes('lidovk');
 }
 
 interface LibraryColumnProps {

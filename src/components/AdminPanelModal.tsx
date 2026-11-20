@@ -106,7 +106,10 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
         setExportFolderInput(PERMANENT_EXPORT_FOLDER_ID);
       }
 
-      const logsRes = await fetch('/api/admin/logs');
+      const logsRes = await fetch('/api/admin/logs', {
+        headers: { 'x-setlist-role': 'admin' },
+        cache: 'no-store',
+      });
       if (logsRes.ok) {
         const data = await logsRes.json();
         setLogs(data.logs || []);
@@ -140,7 +143,10 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
     try {
       const res = await fetch('/api/drive/folders', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'x-setlist-role': 'admin',
+        },
         body: JSON.stringify({
           dataFolderId: dataFolderInput,
           exportFolderId: exportFolderInput,

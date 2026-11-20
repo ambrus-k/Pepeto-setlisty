@@ -9,6 +9,7 @@ import {
   saveFolderSettings,
   testDriveConnection,
   lastParsedXlsx,
+  lastParsedLegend,
 } from './src/services/googleDriveServer';
 
 dotenv.config();
@@ -53,6 +54,7 @@ app.post('/api/auth/verify', (req: Request, res: Response) => {
 
 // 2. Google Drive Repertoire Sync endpoint
 app.get('/api/drive/sync', async (req: Request, res: Response) => {
+  res.setHeader('Cache-Control', 'no-store, max-age=0');
   try {
     const force = req.query.force === 'true';
     const result = await syncMasterSongsFromDrive(force);
@@ -120,9 +122,9 @@ app.get('/api/admin/logs', (_req: Request, res: Response) => {
   return res.json({ logs });
 });
 
-// 8. Debug XLSX items
+// 8. Debug XLSX items & legend
 app.get('/api/drive/debug-xlsx', (_req: Request, res: Response) => {
-  return res.json({ count: lastParsedXlsx.length, items: lastParsedXlsx });
+  return res.json({ count: lastParsedXlsx.length, legend: lastParsedLegend, items: lastParsedXlsx });
 });
 
 // Vite dev server mounting or static file serving

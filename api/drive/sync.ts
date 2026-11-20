@@ -38,6 +38,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     return res.status(405).json({ error: `Metoda ${req.method} není povolena.` });
   }
 
+  res.setHeader('Cache-Control', 'no-store, max-age=0');
+
   try {
     const force = req.query.force === 'true';
     const result = await syncMasterSongsFromDrive(force);

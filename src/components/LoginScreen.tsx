@@ -12,6 +12,7 @@ export const LoginScreen: React.FC = () => {
 
   // Keyboard support for typing PIN
   useEffect(() => {
+    if (isSettingsOpen) return;
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key >= '0' && e.key <= '9') {
         if (pin.length < 8) {
@@ -37,7 +38,7 @@ export const LoginScreen: React.FC = () => {
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [pin]);
+  }, [pin, isSettingsOpen]);
 
   const handleDigit = (digit: string) => {
     if (pin.length < 8) {

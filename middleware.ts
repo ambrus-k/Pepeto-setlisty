@@ -16,9 +16,9 @@ export default function middleware(request: any) {
   const authHeader = request.headers?.get?.('x-setlist-role') || '';
   const adminPinHeader = request.headers?.get?.('x-admin-pin') || '';
 
-  const serverAdminPin = process.env.ADMIN_PIN || '7890';
+  const serverAdminPin = (process.env.ADMIN_PIN || '251925').trim().replace(/^["']|["']$/g, '');
 
-  if (authHeader === 'admin' || adminPinHeader === serverAdminPin) {
+  if (authHeader === 'admin' || (adminPinHeader && adminPinHeader === serverAdminPin)) {
     // Authorized
     return;
   }

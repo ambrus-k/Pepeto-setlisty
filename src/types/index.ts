@@ -106,8 +106,9 @@ export interface PendingUpload {
   id: string;
   eventName: string;
   fileName: string;
-  fileType: 'pdf' | 'mss';
+  fileType: 'pdf' | 'mss' | 'bundle';
   blobData: Blob;
+  pdfBlobData?: Blob;
   createdAt: number;
   status: 'pending' | 'uploading' | 'failed' | 'synced';
   error?: string;

@@ -94,21 +94,29 @@ function SetlistStudio() {
     return sets.reduce((sum, s) => sum + s.songIds.length, 0);
   }, [sets]);
 
-  // 1. Initial Load from IndexedDB
+  // 1. Initial Load from IndexedDB + automatic background refresh from Google Drive when online
   useEffect(() => {
     const loadSavedData = async () => {
       try {
-        const savedSongs = await storage.getSongs();
+        const [savedSongs, savedLegend] = await Promise.all([
+          storage.getSongs(),
+          storage.getSingerLegend(),
+        ]);
+
         if (savedSongs && savedSongs.length > 0) {
-          const enrichedLocal = enrichSongsWithDatabase(savedSongs);
+          const enrichedLocal = enrichSongsWithDatabase(savedSongs, undefined, savedLegend);
           setSongs(enrichedLocal);
+          // Silently fetch fresh Excel/MSS updates from Google Drive in the background
+          if (typeof navigator === 'undefined' || navigator.onLine) {
+            handleSyncDatabase(true, true);
+          }
         } else {
           // Provide bundled DB immediately while attempting live Google Drive sync
           const bundled = getBundledDatabaseSongs();
           if (bundled.length > 0) {
             setSongs(bundled);
           }
-          handleSyncDatabase(false);
+          handleSyncDatabase(true, false);
         }
 
         const savedProject = await storage.getCurrentProject();
@@ -140,12 +148,14 @@ function SetlistStudio() {
   }, [eventName, sets]);
 
   // 3. Sync Database from Backend API (/api/drive/sync)
-  const handleSyncDatabase = async (force = false) => {
+  const handleSyncDatabase = async (force = true, silent = false) => {
     setIsSyncing(true);
-    setSyncMessage(null);
+    if (!silent) {
+      setSyncMessage(null);
+    }
     try {
-      const url = force ? '/api/drive/sync?force=true' : '/api/drive/sync';
-      const res = await fetch(url);
+      const url = force ? `/api/drive/sync?force=true&t=${Date.now()}` : '/api/drive/sync';
+      const res = await fetch(url, { cache: 'no-store' });
       if (!res.ok) {
         const errorData = await res.json().catch(() => ({}));
         throw new Error(errorData.error || `Chyba serveru (${res.status})`);
@@ -153,27 +163,47 @@ function SetlistStudio() {
 
       const data = await res.json();
       if (data.songs && Array.isArray(data.songs) && data.songs.length > 0) {
-        const enrichedSongs = enrichSongsWithDatabase(data.songs, data.dbSongs);
+        const liveLegend =
+          Array.isArray(data.singerLegend) && data.singerLegend.length > 0
+            ? data.singerLegend
+            : await storage.getSingerLegend();
+
+        const enrichedSongs = enrichSongsWithDatabase(data.songs, data.dbSongs, liveLegend);
         setSongs(enrichedSongs);
         await storage.saveSongs(enrichedSongs);
-        const sourceNote = data.source === 'google-drive' ? 'z Google Disku' : 'z centrální databáze';
-        setSyncMessage(`Úspěšně načteno ${enrichedSongs.length} skladeb ${sourceNote}!`);
-        setTimeout(() => setSyncMessage(null), 4000);
+        if (Array.isArray(data.singerLegend) && data.singerLegend.length > 0) {
+          await storage.saveSingerLegend(data.singerLegend);
+        }
+
+        if (!silent) {
+          const sourceNote = data.source === 'google-drive' ? 'z Google Disku' : 'z centrální databáze';
+          const legendNote =
+            Array.isArray(data.singerLegend) && data.singerLegend.length > 0
+              ? ` (legenda: ${data.singerLegend.length} barev)`
+              : '';
+          setSyncMessage(`Úspěšně načteno ${enrichedSongs.length} skladeb ${sourceNote}${legendNote}!`);
+          setTimeout(() => setSyncMessage(null), 4000);
+        }
       }
     } catch (err: any) {
       console.error('Sync failed:', err);
       // If we already have songs, don't wipe them
-      const localSongs = await storage.getSongs();
+      const [localSongs, savedLegend] = await Promise.all([
+        storage.getSongs(),
+        storage.getSingerLegend(),
+      ]);
       if (localSongs && localSongs.length > 0) {
-        setSongs(enrichSongsWithDatabase(localSongs));
+        setSongs(enrichSongsWithDatabase(localSongs, undefined, savedLegend));
       } else {
         const bundled = getBundledDatabaseSongs();
         if (bundled.length > 0) {
           setSongs(bundled);
         }
       }
-      setSyncMessage(`Chyba při synchronizaci: ${err.message}`);
-      setTimeout(() => setSyncMessage(null), 5000);
+      if (!silent) {
+        setSyncMessage(`Chyba při synchronizaci: ${err.message}`);
+        setTimeout(() => setSyncMessage(null), 5000);
+      }
     } finally {
       setIsSyncing(false);
     }
@@ -183,6 +213,14 @@ function SetlistStudio() {
   useEffect(() => {
     if (!isOnline) return;
 
+    const blobToDataUrl = (blob: Blob): Promise<string> =>
+      new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onloadend = () => resolve(String(reader.result || ''));
+        reader.onerror = () => reject(reader.error);
+        reader.readAsDataURL(blob);
+      });
+
     const processQueue = async () => {
       try {
         const pending = await storage.getPendingUploads();
@@ -191,16 +229,22 @@ function SetlistStudio() {
         let syncedCount = 0;
         for (const item of pending) {
           try {
-            let mssXml = '';
-            if (item.fileType === 'mss') {
-              mssXml = await item.blobData.text();
+            // Skip legacy standalone PDF-only items that cannot be posted without MSS
+            if (item.fileType === 'pdf') {
+              await storage.removePendingUpload(item.id);
+              continue;
             }
+
+            const mssXml = await item.blobData.text();
+            const pdfBase64 = item.pdfBlobData ? await blobToDataUrl(item.pdfBlobData) : undefined;
+
             const res = await fetch('/api/drive/export', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({
                 fileName: item.fileName,
                 mssXml: mssXml || undefined,
+                pdfBase64,
                 eventName: item.eventName,
               }),
             });
@@ -568,21 +612,12 @@ function SetlistStudio() {
         pushLog('Offline režim: Export zařazen do lokální IndexedDB fronty pro pozdější synchronizaci.');
 
         await storage.addPendingUpload({
-          id: `upload-${Date.now()}-pdf`,
-          eventName,
-          fileName: pdfFileName,
-          fileType: 'pdf',
-          blobData: pdfBlob,
-          createdAt: Date.now(),
-          status: 'pending',
-        });
-
-        await storage.addPendingUpload({
-          id: `upload-${Date.now()}-mss`,
+          id: `upload-${Date.now()}-bundle`,
           eventName,
           fileName: mssFileName,
-          fileType: 'mss',
+          fileType: 'bundle',
           blobData: new Blob([mssXml], { type: 'text/xml' }),
+          pdfBlobData: pdfBlob,
           createdAt: Date.now(),
           status: 'pending',
         });
@@ -674,7 +709,7 @@ function SetlistStudio() {
             allSets={sets}
             onAddSongToActiveSet={handleAddSongToActiveSet}
             onInspectSong={setInspectedSong}
-            onSyncDatabase={() => handleSyncDatabase(false)}
+            onSyncDatabase={() => handleSyncDatabase(true)}
           />
         </section>
       </main>
@@ -732,7 +767,7 @@ function SetlistStudio() {
         role={role || 'user'}
         totalMasterSongs={songs.length}
         isSyncing={isSyncing}
-        onSyncDatabase={() => handleSyncDatabase(false)}
+        onSyncDatabase={() => handleSyncDatabase(true)}
         onOpenAdminPanel={() => setIsAdminPanelOpen(true)}
       />
 

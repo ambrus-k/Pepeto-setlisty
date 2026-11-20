@@ -1,7 +1,14 @@
 import bundledDbRaw from '../data/pepeto-songs-app-db.json';
-import { PepetoSingerLegendItem, PepetoSongDatabase, Song } from '../types';
+import type { PepetoSingerLegendItem, PepetoSongDatabase, Song } from '../types/index.ts';
+import {
+  extractSaxTag,
+  isNotCommonlyPlayedLabel,
+  matchColorToLegend,
+  normalizeHexColor,
+} from './parser.ts';
 
 const bundledDb = bundledDbRaw as unknown as PepetoSongDatabase;
+const GENERIC_SHEET_CATEGORY_RE = /^(seznam\b|list\s*\d+|sheet\s*\d+)/i;
 
 function normalizeTitle(value?: string | null): string {
   if (!value) return '';
@@ -58,11 +65,16 @@ function findBestMatch(song: Song, maps: ReturnType<typeof buildLookupMaps>): So
 
 /**
  * Merges live Drive/MSS/XLSX song records with rich metadata from the secondary database.
- * Live Drive fields (id, mss_title, pdf_title, textColor, bgColor) stay authoritative.
+ * - Live Drive fields (id, mss_title, pdf_title, textColor, bgColor) stay authoritative.
+ * - Singer & commonly-played status are dynamically derived from the song's live Excel bgColor
+ *   against the live Excel legend (or bundled legend fallback), so any recoloring in Excel
+ *   immediately updates badges and filters.
+ * - Rich musical categories from the metadata DB are preserved (never replaced by Excel sheet names).
  */
 export function enrichSongsWithDatabase(
   incomingSongs: Song[],
-  externalDbSongs?: Song[]
+  externalDbSongs?: Song[],
+  liveLegend?: PepetoSingerLegendItem[] | null
 ): Song[] {
   const bundledMaps = buildLookupMaps(bundledDb.songs || []);
   const externalMaps =
@@ -70,29 +82,81 @@ export function enrichSongsWithDatabase(
       ? buildLookupMaps(externalDbSongs)
       : null;
 
+  const activeLegend =
+    liveLegend && liveLegend.length > 0 ? liveLegend : bundledDb.singerLegend || [];
+
   return incomingSongs.map((song) => {
     const dbMatch =
       (externalMaps ? findBestMatch(song, externalMaps) : undefined) ||
       findBestMatch(song, bundledMaps);
 
+    const liveBgColor = normalizeHexColor(song.bgColor || dbMatch?.bgColor, '#ffffff');
+    const isUtility =
+      song.isPlayableSong === false ||
+      dbMatch?.isPlayableSong === false ||
+      /^0+\s+seznam$/i.test((song.mss_title || '').trim()) ||
+      song.id === 998 ||
+      song.id === 999;
+
+    const legendMatch = !isUtility ? matchColorToLegend(liveBgColor, activeLegend) : undefined;
+    const liveSax =
+      extractSaxTag(song.pdf_title) ||
+      extractSaxTag(song.mss_title) ||
+      song.pepeto?.sax ||
+      dbMatch?.pepeto?.sax ||
+      null;
+
+    // Prefer rich musical category from DB over generic Excel sheet names ("Seznam - vybarvený")
+    const incomingCat =
+      song.category && !GENERIC_SHEET_CATEGORY_RE.test(song.category.trim())
+        ? song.category
+        : undefined;
+    const resolvedCategory =
+      dbMatch?.category ||
+      incomingCat ||
+      (legendMatch?.singer.toLowerCase().includes('lidovk') ? 'Lidovky' : undefined);
+
+    const resolvedSinger = isUtility
+      ? null
+      : legendMatch?.singer || song.pepeto?.singer || dbMatch?.pepeto?.singer || null;
+
+    const resolvedCommonlyPlayed = isUtility
+      ? false
+      : legendMatch
+      ? !isNotCommonlyPlayedLabel(legendMatch.description || legendMatch.singer)
+      : song.pepeto?.isCommonlyPlayed ?? dbMatch?.pepeto?.isCommonlyPlayed ?? true;
+
+    const mergedPepeto = {
+      ...(dbMatch?.pepeto || {}),
+      ...(song.pepeto || {}),
+      bgColor: liveBgColor,
+      singer: resolvedSinger,
+      isCommonlyPlayed: resolvedCommonlyPlayed,
+      sax: liveSax,
+    };
+
     if (!dbMatch) {
-      return song;
+      return {
+        ...song,
+        bgColor: liveBgColor,
+        category: resolvedCategory,
+        isPlayableSong: !isUtility,
+        pepeto: mergedPepeto,
+      };
     }
 
     return {
       ...dbMatch,
       ...song,
-      // Keep live category/artist/note if non-empty, otherwise inherit from rich DB
-      category: song.category || dbMatch.category,
+      bgColor: liveBgColor,
+      category: resolvedCategory,
       artist: song.artist || dbMatch.artist,
       note: song.note || dbMatch.note,
-      // Preserve live Drive bgColor as authoritative for singer display while retaining nested pepeto metadata
-      pepeto: dbMatch.pepeto
-        ? {
-            ...dbMatch.pepeto,
-            bgColor: song.bgColor || dbMatch.pepeto.bgColor,
-          }
-        : undefined,
+      fileName: song.fileName || dbMatch.mss_fileName || dbMatch.fileName,
+      mss_fileName: song.mss_fileName || song.fileName || dbMatch.mss_fileName,
+      mss_songId: song.mss_songId !== undefined ? song.mss_songId : dbMatch.mss_songId,
+      isPlayableSong: !isUtility,
+      pepeto: mergedPepeto,
     };
   });
 }

@@ -98,7 +98,17 @@ export const ExportModal: React.FC<Props> = ({
   // Sets for visual stage sheet preview
   const validSets = sets.filter((s) => s.songIds.length > 0);
   const previewSets = validSets.length > 0 ? validSets : sets;
-  const currentPreviewSet = previewSets[selectedPreviewSetIdx] || previewSets[0];
+  const safePreviewIdx =
+    selectedPreviewSetIdx >= 0 && selectedPreviewSetIdx < previewSets.length
+      ? selectedPreviewSetIdx
+      : 0;
+  const currentPreviewSet = previewSets[safePreviewIdx] || previewSets[0];
+
+  useEffect(() => {
+    if (selectedPreviewSetIdx >= previewSets.length) {
+      setSelectedPreviewSetIdx(0);
+    }
+  }, [previewSets.length, selectedPreviewSetIdx]);
 
   // Prepare table rows for current preview sheet
   const previewRows = useMemo(() => {
