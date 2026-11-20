@@ -634,15 +634,34 @@ export async function testDriveConnection(): Promise<{
         message: 'V Google Cloud projektu není aktivováno Google Drive API. Povolte ho kliknutím na aktivační odkaz.',
       };
     }
+    const errData = err?.response?.data;
+    const errDesc =
+      typeof errData === 'object' && errData?.error_description
+        ? String(errData.error_description)
+        : '';
+    const cleanToken = refreshToken.replace(/^["']|["']$/g, '').trim();
+    const cleanClientId = clientId.replace(/^["']|["']$/g, '').trim();
+    const tokenHint = !cleanToken
+      ? 'chybí'
+      : cleanToken.startsWith('1//')
+      ? `OK (1//..., délka ${cleanToken.length})`
+      : cleanToken.startsWith('ya29')
+      ? 'CHYBA: vložen Access token (ya29...) místo Refresh tokenu (1//...)'
+      : cleanToken.startsWith('4/')
+      ? 'CHYBA: vložen Authorization code (4/...) místo Refresh tokenu (1//...)'
+      : `neobvyklý formát (začíná "${cleanToken.slice(0, 4)}...", délka ${cleanToken.length})`;
+    const clientIdHint = cleanClientId ? `${cleanClientId.slice(0, 22)}...` : 'chybí';
+
     return {
       authOk: false,
+      authMode,
       clientEmail,
       projectId,
       apiEnabled: false,
       dataFolder: { configured: false, folderId: '', accessible: false, hasMssFile: false, hasXlsxFile: false },
       exportFolder: { configured: false, folderId: '', accessible: false },
       overallStatus: 'AUTH_ERROR',
-      message: `Chyba ověření servisního účtu: ${msg}`,
+      message: `Chyba ověření (${authMode}): ${msg}${errDesc ? ` (${errDesc})` : ''} | ClientID=${clientIdHint} | RefreshToken=${tokenHint}`,
     };
   }
 
