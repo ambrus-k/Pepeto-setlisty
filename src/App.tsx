@@ -162,6 +162,14 @@ function SetlistStudio() {
       }
 
       const data = await res.json();
+      if (data.success === false) {
+        const rawMsg = String(data.message || data.error || 'Synchronizace z Google Disku selhala.');
+        const friendlyMsg = rawMsg.includes('invalid_grant')
+          ? 'Vypršelo přihlášení ke Google Disku (invalid_grant). Obnovte GOOGLE_REFRESH_TOKEN ve Vercelu a přepněte OAuth aplikaci v Google Cloud z „Testing“ na „In production“.'
+          : rawMsg;
+        throw new Error(friendlyMsg);
+      }
+
       if (data.songs && Array.isArray(data.songs) && data.songs.length > 0) {
         const liveLegend =
           Array.isArray(data.singerLegend) && data.singerLegend.length > 0
