@@ -157,9 +157,10 @@ export function saveFolderSettings(dataFolderInput: string, exportFolderInput: s
  * Fallback: Service Account JWT (Client Email, Private Key).
  */
 export function getGoogleAuthClient(): OAuth2Client | JWT | null {
-  const clientId = (process.env.GOOGLE_CLIENT_ID || PERMANENT_CLIENT_ID).trim();
-  const clientSecret = (process.env.GOOGLE_CLIENT_SECRET || PERMANENT_CLIENT_SECRET).trim();
-  const refreshToken = (process.env.GOOGLE_REFRESH_TOKEN || PERMANENT_REFRESH_TOKEN).trim();
+  const cleanEnv = (v?: string) => (v || '').trim().replace(/^["']|["']$/g, '').trim();
+  const clientId = cleanEnv(process.env.GOOGLE_CLIENT_ID || PERMANENT_CLIENT_ID);
+  const clientSecret = cleanEnv(process.env.GOOGLE_CLIENT_SECRET || PERMANENT_CLIENT_SECRET);
+  const refreshToken = cleanEnv(process.env.GOOGLE_REFRESH_TOKEN || PERMANENT_REFRESH_TOKEN);
 
   if (clientId && clientSecret && refreshToken) {
     try {
