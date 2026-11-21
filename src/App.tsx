@@ -30,6 +30,18 @@ import {
   compareSongsBySort,
 } from './utils/songFilters';
 
+const MAX_HISTORY_STEPS = 5;
+
+interface HistorySnapshot {
+  eventName: string;
+  sets: SetlistGroup[];
+  label: string;
+}
+
+function cloneSets(sets: SetlistGroup[]): SetlistGroup[] {
+  return sets.map((s) => ({ ...s, songIds: [...s.songIds] }));
+}
+
 const DEFAULT_SETS: SetlistGroup[] = [
   { id: 'set-1', name: 'Set 1', songIds: [] },
   { id: 'set-2', name: 'Set 2', songIds: [] },
@@ -171,6 +183,60 @@ function SetlistStudio() {
     sets,
   });
   latestProjectRef.current = { eventName, sets };
+
+  // Undo / Redo history stacks (up to 5 steps back & 5 steps forward)
+  const [undoStack, setUndoStack] = useState<HistorySnapshot[]>([]);
+  const [redoStack, setRedoStack] = useState<HistorySnapshot[]>([]);
+
+  const recordHistory = useCallback((label: string) => {
+    const snap: HistorySnapshot = {
+      eventName: latestProjectRef.current.eventName,
+      sets: cloneSets(latestProjectRef.current.sets),
+      label,
+    };
+    setUndoStack((prev) => [...prev, snap].slice(-MAX_HISTORY_STEPS));
+    setRedoStack([]);
+  }, []);
+
+  const handleUndo = useCallback(() => {
+    if (undoStack.length === 0) return;
+    const prevSnap = undoStack[undoStack.length - 1];
+    const currentSnap: HistorySnapshot = {
+      eventName: latestProjectRef.current.eventName,
+      sets: cloneSets(latestProjectRef.current.sets),
+      label: prevSnap.label,
+    };
+    const nextUndo = undoStack.slice(0, -1);
+    const nextRedo = [...redoStack, currentSnap].slice(-MAX_HISTORY_STEPS);
+
+    setUndoStack(nextUndo);
+    setRedoStack(nextRedo);
+    setEventName(prevSnap.eventName);
+    setSets(cloneSets(prevSnap.sets));
+    setLeftSelection(new Set());
+    setRightSelection(new Set());
+    showSuccess(`Zpět: ${prevSnap.label} (${nextUndo.length}/${MAX_HISTORY_STEPS})`);
+  }, [undoStack, redoStack, showSuccess]);
+
+  const handleRedo = useCallback(() => {
+    if (redoStack.length === 0) return;
+    const nextSnap = redoStack[redoStack.length - 1];
+    const currentSnap: HistorySnapshot = {
+      eventName: latestProjectRef.current.eventName,
+      sets: cloneSets(latestProjectRef.current.sets),
+      label: nextSnap.label,
+    };
+    const nextRedo = redoStack.slice(0, -1);
+    const nextUndo = [...undoStack, currentSnap].slice(-MAX_HISTORY_STEPS);
+
+    setRedoStack(nextRedo);
+    setUndoStack(nextUndo);
+    setEventName(nextSnap.eventName);
+    setSets(cloneSets(nextSnap.sets));
+    setLeftSelection(new Set());
+    setRightSelection(new Set());
+    showSuccess(`Vpřed: ${nextSnap.label} (${nextRedo.length}/${MAX_HISTORY_STEPS})`);
+  }, [undoStack, redoStack, showSuccess]);
 
   // Per-pane selection (song.id for Library, originalIndex for Set)
   const [leftSelection, setLeftSelection] = useState<Set<number>>(() => new Set());
@@ -553,6 +619,7 @@ function SetlistStudio() {
   };
 
   const handleAddSet = () => {
+    recordHistory('Přidání setlistu');
     const dynamicCount = sets.filter((s) => !s.isFixed).length;
     const newSet: SetlistGroup = {
       id: `set-${Date.now()}`,
@@ -581,6 +648,7 @@ function SetlistStudio() {
 
   const handleDeleteSet = (id: string) => {
     if (sets.length <= 1) return;
+    recordHistory('Smazání setlistu');
     const updated = sets.filter((s) => s.id !== id);
     setSets(updated);
     const fallbackId = updated[0]?.id || 'library';
@@ -631,6 +699,7 @@ function SetlistStudio() {
     const targetSet = paneData.setGroup;
     if (!targetSet || paneData.isLibrary || paneData.hasFilter) return;
 
+    recordHistory('Změna pořadí');
     setSets((prevSets) =>
       prevSets.map((s) => {
         if (s.id !== targetSet.id) return s;
@@ -804,6 +873,7 @@ function SetlistStudio() {
     }
 
     if (toAppend.length > 0) {
+      recordHistory('Kopírování skladeb');
       setSets((prevSets) =>
         prevSets.map((s) =>
           s.id === targetSet.id ? { ...s, songIds: [...s.songIds, ...toAppend] } : s
@@ -848,6 +918,7 @@ function SetlistStudio() {
 
     if (songIdsToMove.length === 0) return;
 
+    recordHistory('Přesun skladeb');
     setSets((prevSets) =>
       prevSets.map((s) => {
         if (s.id === sourceSet.id) {
@@ -891,6 +962,7 @@ function SetlistStudio() {
       }
     }
 
+    recordHistory('Posun nahoru');
     setSets((prevSets) =>
       prevSets.map((s) => (s.id === sourceSet.id ? { ...s, songIds: list } : s))
     );
@@ -899,7 +971,7 @@ function SetlistStudio() {
       if (activePane === 'left') setRightSelection(new Set());
       else setLeftSelection(new Set());
     }
-  }, [canMoveUp, activeData.setGroup, activeSelection, setActiveSelection, sameSourceInBothPanes, activePane]);
+  }, [canMoveUp, activeData.setGroup, activeSelection, setActiveSelection, sameSourceInBothPanes, activePane, recordHistory]);
 
   const handleMoveSelectedDown = useCallback(() => {
     if (!canMoveDown || !activeData.setGroup) return;
@@ -917,6 +989,7 @@ function SetlistStudio() {
       }
     }
 
+    recordHistory('Posun dolů');
     setSets((prevSets) =>
       prevSets.map((s) => (s.id === sourceSet.id ? { ...s, songIds: list } : s))
     );
@@ -925,7 +998,7 @@ function SetlistStudio() {
       if (activePane === 'left') setRightSelection(new Set());
       else setLeftSelection(new Set());
     }
-  }, [canMoveDown, activeData.setGroup, activeSelection, setActiveSelection, sameSourceInBothPanes, activePane]);
+  }, [canMoveDown, activeData.setGroup, activeSelection, setActiveSelection, sameSourceInBothPanes, activePane, recordHistory]);
 
   const handleRemoveSelected = useCallback(() => {
     if (!canRemove || !activeData.setGroup) return;
@@ -933,6 +1006,7 @@ function SetlistStudio() {
     const indicesToRemove = new Set(activeSelection);
     const removedCount = indicesToRemove.size;
 
+    recordHistory('Odstranění skladeb');
     setSets((prevSets) =>
       prevSets.map((s) =>
         s.id === sourceSet.id
@@ -946,7 +1020,7 @@ function SetlistStudio() {
       else setLeftSelection(new Set());
     }
     showSuccess(`Odebráno ${formatCzechSongCount(removedCount)} z „${sourceSet.name}“.`);
-  }, [canRemove, activeData.setGroup, activeSelection, setActiveSelection, sameSourceInBothPanes, activePane, showSuccess]);
+  }, [canRemove, activeData.setGroup, activeSelection, setActiveSelection, sameSourceInBothPanes, activePane, showSuccess, recordHistory]);
 
   const handleToggleSelectAll = useCallback(() => {
     setActiveSelection(new Set(activeData.rows.map((r) => r.rowKey)));
@@ -981,6 +1055,8 @@ function SetlistStudio() {
   }, [targetData.setGroup, activeData.setGroup, sets]);
 
   const handleAddSongFromDetailModal = (song: Song) => {
+    if (detailTargetSet.songIds.includes(song.id)) return;
+    recordHistory('Přidání skladby');
     setSets((prevSets) =>
       prevSets.map((s) => {
         if (s.id === detailTargetSet.id) {
@@ -995,6 +1071,7 @@ function SetlistStudio() {
   // Save updated setlist names, order, colors, or additions from SetlistManagerModal
   const handleSaveManagedSets = (updatedSets: SetlistGroup[]) => {
     if (updatedSets.length === 0) return;
+    recordHistory('Úprava setlistů');
     setSets(updatedSets);
 
     // Clear selections on panes whose set was deleted or cleared
@@ -1065,6 +1142,15 @@ function SetlistStudio() {
       } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'a') {
         e.preventDefault();
         handleToggleSelectAll();
+      } else if ((e.ctrlKey || e.metaKey) && !e.shiftKey && e.key.toLowerCase() === 'z') {
+        e.preventDefault();
+        handleUndo();
+      } else if (
+        (e.ctrlKey || e.metaKey) &&
+        (e.key.toLowerCase() === 'y' || (e.shiftKey && e.key.toLowerCase() === 'z'))
+      ) {
+        e.preventDefault();
+        handleRedo();
       }
     };
 
@@ -1077,12 +1163,17 @@ function SetlistStudio() {
     handleRemoveSelected,
     handleClearSelection,
     handleToggleSelectAll,
+    handleUndo,
+    handleRedo,
     canRemove,
     activeSelection.size,
   ]);
 
   // 5. Import Handlers for .mss and .xlsx files (100% preserved)
   const handleApplyImport = async (result: ImportResult) => {
+    if ((result.sets && result.sets.length > 0) || result.eventName) {
+      recordHistory('Import setlistu');
+    }
     if (result.sets && result.sets.length > 0) {
       setSets(result.sets);
       setLeftSourceId(result.sets[0].id);
@@ -1159,6 +1250,7 @@ function SetlistStudio() {
 
   // 6. Manual Song Pairing handler (100% preserved)
   const handlePairSong = (tempId: number, targetMasterId: number) => {
+    recordHistory('Spárování skladby');
     const targetSong = songs.find((s) => s.id === targetMasterId);
 
     setSets((prevSets) =>
@@ -1385,6 +1477,12 @@ function SetlistStudio() {
         canRemove={canRemove}
         canInspect={selectedSingleSong !== null}
         unmatchedSelectedSong={unmatchedSelectedSong}
+        undoCount={undoStack.length}
+        redoCount={redoStack.length}
+        lastUndoLabel={undoStack[undoStack.length - 1]?.label}
+        lastRedoLabel={redoStack[redoStack.length - 1]?.label}
+        onUndo={handleUndo}
+        onRedo={handleRedo}
         onCopy={handleCopySelected}
         onMove={handleMoveSelected}
         onMoveUp={handleMoveSelectedUp}

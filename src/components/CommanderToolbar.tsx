@@ -9,12 +9,14 @@ import {
   Filter,
   X,
   CheckSquare,
-  Square,
+  SquareX,
   HelpCircle,
   ArrowLeftRight,
   ArrowRight,
   ArrowLeft,
   ArrowUpDown,
+  Undo2,
+  Redo2,
   Mic,
   Music2,
   Gauge,
@@ -58,6 +60,14 @@ interface CommanderToolbarProps {
   canInspect: boolean;
   unmatchedSelectedSong: Song | null;
 
+  // Undo / Redo (up to 5 steps)
+  undoCount: number;
+  redoCount: number;
+  lastUndoLabel?: string;
+  lastRedoLabel?: string;
+  onUndo: () => void;
+  onRedo: () => void;
+
   // Actions
   onCopy: () => void;
   onMove: () => void;
@@ -96,6 +106,12 @@ export const CommanderToolbar: React.FC<CommanderToolbarProps> = ({
   canRemove,
   canInspect,
   unmatchedSelectedSong,
+  undoCount,
+  redoCount,
+  lastUndoLabel,
+  lastRedoLabel,
+  onUndo,
+  onRedo,
   onCopy,
   onMove,
   onMoveUp,
@@ -289,46 +305,79 @@ export const CommanderToolbar: React.FC<CommanderToolbarProps> = ({
 
           <div className="h-4 w-px bg-slate-300 dark:bg-slate-700 mx-0.5 shrink-0" />
 
-          {/* SELECT ALL / CLEAR SELECTION — Compact icon + count */}
-          <button
-            type="button"
-            onClick={selectedCount > 0 && allVisibleSelected ? onClearSelection : onToggleSelectAll}
-            disabled={visibleCount === 0}
-            className={`inline-flex items-center gap-1 rounded-lg p-1.5 text-xs font-semibold transition cursor-pointer border shrink-0 ${
-              selectedCount > 0
-                ? 'bg-indigo-50 dark:bg-indigo-950/60 border-indigo-300 dark:border-indigo-600/60 text-indigo-700 dark:text-indigo-200 hover:bg-indigo-100 dark:hover:bg-indigo-900/60 px-2'
-                : 'bg-white dark:bg-slate-800/90 border-slate-300 dark:border-slate-700 text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700'
-            } disabled:opacity-40 disabled:pointer-events-none`}
-            title={
-              selectedCount > 0 && allVisibleSelected
-                ? 'Zrušit označení v aktivním okně (Esc)'
-                : 'Označit všechny zobrazené skladby v aktivním okně (Ctrl+A)'
-            }
-            aria-label="Označit vše"
-          >
-            {allVisibleSelected && visibleCount > 0 ? (
-              <CheckSquare className="w-3.5 h-3.5 text-indigo-600 dark:text-indigo-400" />
-            ) : (
-              <Square className="w-3.5 h-3.5" />
-            )}
-            {selectedCount > 0 && (
-              <span className="font-mono text-[0.6875rem] font-bold leading-none">
-                {selectedCount}
-              </span>
-            )}
-          </button>
+          {/* SELECT ALL & DESELECT ALL — Paired compact icon pill */}
+          <div className="inline-flex items-center rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800/90 overflow-hidden shadow-2xs shrink-0">
+            <button
+              type="button"
+              onClick={onToggleSelectAll}
+              disabled={visibleCount === 0 || allVisibleSelected}
+              className={`inline-flex items-center gap-1 p-1.5 text-xs font-semibold transition cursor-pointer border-r border-slate-200 dark:border-slate-700 ${
+                allVisibleSelected && visibleCount > 0
+                  ? 'bg-indigo-50 dark:bg-indigo-950/70 text-indigo-600 dark:text-indigo-300 opacity-75 cursor-default'
+                  : 'text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700'
+              } disabled:opacity-35 disabled:pointer-events-none`}
+              title="Označit vše v aktivním okně (Ctrl+A)"
+              aria-label="Označit vše"
+            >
+              <CheckSquare className="w-3.5 h-3.5" />
+            </button>
 
-          {selectedCount > 0 && (
             <button
               type="button"
               onClick={onClearSelection}
-              className="p-1.5 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800/90 text-slate-500 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-700 transition cursor-pointer shrink-0"
-              title="Zrušit výběr (Esc)"
-              aria-label="Zrušit výběr"
+              disabled={selectedCount === 0}
+              className={`inline-flex items-center gap-1 p-1.5 text-xs font-semibold transition cursor-pointer ${
+                selectedCount > 0
+                  ? 'bg-indigo-50/70 dark:bg-indigo-950/40 text-indigo-700 dark:text-indigo-200 hover:bg-rose-50 dark:hover:bg-rose-950/50 hover:text-rose-600 dark:hover:text-rose-300'
+                  : 'text-slate-400 dark:text-slate-500'
+              } disabled:opacity-30 disabled:pointer-events-none`}
+              title={
+                selectedCount > 0
+                  ? `Odznačit vše (${selectedCount} vybráno) • Esc`
+                  : 'Odznačit vše (Esc)'
+              }
+              aria-label="Odznačit vše"
             >
-              <X className="w-3.5 h-3.5" />
+              <SquareX className="w-3.5 h-3.5" />
+              {selectedCount > 0 && (
+                <span className="font-mono text-[0.625rem] font-bold leading-none pr-0.5">
+                  {selectedCount}
+                </span>
+              )}
             </button>
-          )}
+          </div>
+
+          {/* UNDO / REDO (up to 5 steps back & 5 steps forward) */}
+          <div className="inline-flex items-center rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800/90 overflow-hidden shadow-2xs shrink-0">
+            <button
+              type="button"
+              onClick={onUndo}
+              disabled={undoCount === 0}
+              className="p-1.5 text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700 hover:text-indigo-600 dark:hover:text-indigo-300 disabled:opacity-30 disabled:pointer-events-none transition cursor-pointer border-r border-slate-200 dark:border-slate-700"
+              title={
+                undoCount > 0
+                  ? `Krok zpět: ${lastUndoLabel || 'poslední změna'} (${undoCount}/5) • Ctrl+Z`
+                  : 'Žádný krok zpět (Ctrl+Z)'
+              }
+              aria-label="Krok zpět"
+            >
+              <Undo2 className="w-3.5 h-3.5" />
+            </button>
+            <button
+              type="button"
+              onClick={onRedo}
+              disabled={redoCount === 0}
+              className="p-1.5 text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700 hover:text-indigo-600 dark:hover:text-indigo-300 disabled:opacity-30 disabled:pointer-events-none transition cursor-pointer"
+              title={
+                redoCount > 0
+                  ? `Krok vpřed: ${lastRedoLabel || 'vrácená změna'} (${redoCount}/5) • Ctrl+Y`
+                  : 'Žádný krok vpřed (Ctrl+Y)'
+              }
+              aria-label="Krok vpřed"
+            >
+              <Redo2 className="w-3.5 h-3.5" />
+            </button>
+          </div>
 
           {/* SONG DETAIL (?) — Question mark icon ONLY */}
           <button
