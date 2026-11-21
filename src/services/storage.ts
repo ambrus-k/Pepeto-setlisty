@@ -17,8 +17,23 @@ const KEYS = {
   SETTINGS: 'app_settings',
 };
 
+const LOCAL_PROJECT_MIRROR_KEY = 'pepeto_current_project_v1';
+const LOCAL_WORKSPACE_UI_KEY = 'pepeto_workspace_ui_v1';
+
+export interface WorkspaceUiState {
+  leftSourceId: string;
+  rightSourceId: string;
+  activePane: 'left' | 'right';
+}
+
 export const PERMANENT_DATA_FOLDER_ID = '1pZuDqPX6OVbGoYdfOg_p3DqJ0cEhAiq2';
 export const PERMANENT_EXPORT_FOLDER_ID = '1gvZxnQDDdQtIMGO7-ai877tdZcYysfs-';
+
+function isValidProject(obj: unknown): obj is EventProject {
+  if (!obj || typeof obj !== 'object') return false;
+  const candidate = obj as Partial<EventProject>;
+  return Array.isArray(candidate.sets) && candidate.sets.length > 0;
+}
 
 export const storage = {
   // Master songs library
@@ -39,13 +54,82 @@ export const storage = {
     return await store.getItem<PepetoSingerLegendItem[]>(KEYS.SINGER_LEGEND);
   },
 
-  // Active event project
+  // Synchronous mirror in localStorage (survives instant Android pull-to-refresh & prevents mount race)
+  getCurrentProjectSync(): EventProject | null {
+    try {
+      if (typeof window === 'undefined' || !window.localStorage) return null;
+      const raw = window.localStorage.getItem(LOCAL_PROJECT_MIRROR_KEY);
+      if (!raw) return null;
+      const parsed = JSON.parse(raw);
+      return isValidProject(parsed) ? parsed : null;
+    } catch {
+      return null;
+    }
+  },
+
+  saveCurrentProjectSync(project: EventProject): void {
+    try {
+      if (typeof window === 'undefined' || !window.localStorage) return;
+      window.localStorage.setItem(LOCAL_PROJECT_MIRROR_KEY, JSON.stringify(project));
+    } catch (err) {
+      console.warn('Failed to write sync project mirror to localStorage:', err);
+    }
+  },
+
+  // Active event project (dual-layer: synchronous localStorage + durable IndexedDB)
   async saveCurrentProject(project: EventProject): Promise<void> {
+    this.saveCurrentProjectSync(project);
     await store.setItem(KEYS.CURRENT_PROJECT, project);
   },
 
   async getCurrentProject(): Promise<EventProject | null> {
-    return await store.getItem<EventProject>(KEYS.CURRENT_PROJECT);
+    const syncProject = this.getCurrentProjectSync();
+    let idbProject: EventProject | null = null;
+    try {
+      const rawIdb = await store.getItem<EventProject>(KEYS.CURRENT_PROJECT);
+      if (isValidProject(rawIdb)) {
+        idbProject = rawIdb;
+      }
+    } catch (err) {
+      console.warn('Failed to read current project from IndexedDB:', err);
+    }
+
+    if (syncProject && idbProject) {
+      return (syncProject.updatedAt || 0) >= (idbProject.updatedAt || 0)
+        ? syncProject
+        : idbProject;
+    }
+    return syncProject || idbProject;
+  },
+
+  // Workspace pane UI state (which sources are open in Left/Right panes)
+  getWorkspaceUiSync(): WorkspaceUiState | null {
+    try {
+      if (typeof window === 'undefined' || !window.localStorage) return null;
+      const raw = window.localStorage.getItem(LOCAL_WORKSPACE_UI_KEY);
+      if (!raw) return null;
+      const parsed = JSON.parse(raw);
+      if (
+        parsed &&
+        typeof parsed.leftSourceId === 'string' &&
+        typeof parsed.rightSourceId === 'string' &&
+        (parsed.activePane === 'left' || parsed.activePane === 'right')
+      ) {
+        return parsed as WorkspaceUiState;
+      }
+      return null;
+    } catch {
+      return null;
+    }
+  },
+
+  saveWorkspaceUiSync(ui: WorkspaceUiState): void {
+    try {
+      if (typeof window === 'undefined' || !window.localStorage) return;
+      window.localStorage.setItem(LOCAL_WORKSPACE_UI_KEY, JSON.stringify(ui));
+    } catch {
+      // ignore storage quota errors for UI preferences
+    }
   },
 
   // Saved projects archive

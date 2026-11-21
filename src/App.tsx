@@ -17,6 +17,7 @@ import { ImportModal } from './components/ImportModal';
 import { ManualPairModal } from './components/ManualPairModal';
 import { DisplaySettingsModal } from './components/DisplaySettingsModal';
 import { SongDetailModal } from './components/SongDetailModal';
+import { SetlistManagerModal } from './components/SetlistManagerModal';
 import { importMssText, importXlsxBuffer, ImportResult } from './services/importSetlist';
 import { enrichSongsWithDatabase, getBundledDatabaseSongs } from './services/songEnricher';
 import {
@@ -131,15 +132,45 @@ function SetlistStudio() {
   const { role, logout } = useAuth();
   const { showSuccess, showError, showWarning } = useToast();
 
+  // Instant synchronous hydration from localStorage mirror (survives Android pull-to-refresh without race condition)
+  const initialSyncProjectRef = useRef<EventProject | null | undefined>(undefined);
+  if (initialSyncProjectRef.current === undefined) {
+    initialSyncProjectRef.current = storage.getCurrentProjectSync();
+  }
+  const initialUiRef = useRef(storage.getWorkspaceUiSync());
+
   // App State - event name, setlist groups, and master song database
-  const [eventName, setEventName] = useState<string>('');
-  const [sets, setSets] = useState<SetlistGroup[]>(DEFAULT_SETS);
+  const [eventName, setEventName] = useState<string>(
+    () => initialSyncProjectRef.current?.eventName ?? ''
+  );
+  const [sets, setSets] = useState<SetlistGroup[]>(() =>
+    initialSyncProjectRef.current?.sets && initialSyncProjectRef.current.sets.length > 0
+      ? initialSyncProjectRef.current.sets
+      : DEFAULT_SETS
+  );
   const [songs, setSongs] = useState<Song[]>([]);
 
   // Total Commander Dual-Pane State
-  const [leftSourceId, setLeftSourceId] = useState<string>('set-1');
-  const [rightSourceId, setRightSourceId] = useState<string>('library');
-  const [activePane, setActivePane] = useState<PaneSide>('right');
+  const [leftSourceId, setLeftSourceId] = useState<string>(
+    () =>
+      initialUiRef.current?.leftSourceId ||
+      initialSyncProjectRef.current?.sets?.[0]?.id ||
+      'set-1'
+  );
+  const [rightSourceId, setRightSourceId] = useState<string>(
+    () => initialUiRef.current?.rightSourceId || 'library'
+  );
+  const [activePane, setActivePane] = useState<PaneSide>(
+    () => initialUiRef.current?.activePane || 'right'
+  );
+
+  // Hydration & flush guards so mount NEVER overwrites saved IndexedDB/localStorage data
+  const hasHydratedProjectRef = useRef<boolean>(false);
+  const latestProjectRef = useRef<{ eventName: string; sets: SetlistGroup[] }>({
+    eventName,
+    sets,
+  });
+  latestProjectRef.current = { eventName, sets };
 
   // Per-pane selection (song.id for Library, originalIndex for Set)
   const [leftSelection, setLeftSelection] = useState<Set<number>>(() => new Set());
@@ -163,6 +194,7 @@ function SetlistStudio() {
   const [isExporting, setIsExporting] = useState<boolean>(false);
   const [isImportModalOpen, setIsImportModalOpen] = useState<boolean>(false);
   const [isDisplaySettingsOpen, setIsDisplaySettingsOpen] = useState<boolean>(false);
+  const [isSetlistManagerOpen, setIsSetlistManagerOpen] = useState<boolean>(false);
   const [pairingSong, setPairingSong] = useState<Song | null>(null);
   const [inspectedSong, setInspectedSong] = useState<Song | null>(null);
   const [exportProgress, setExportProgress] = useState<ExportProgressState>(DEFAULT_EXPORT_PROGRESS);
@@ -263,14 +295,44 @@ function SetlistStudio() {
     return leftPaneData.setGroup ? new Set(leftPaneData.setGroup.songIds) : undefined;
   }, [leftPaneData.setGroup]);
 
-  // 1. Initial Load from IndexedDB + automatic background refresh from Google Drive when online
+  // 1. Initial Load from IndexedDB (reconciles with sync mirror) + automatic background refresh from Google Drive
   useEffect(() => {
+    let isCancelled = false;
+
     const loadSavedData = async () => {
+      try {
+        // Load saved project FIRST before awaiting songs so there is never a delay or race condition
+        const savedProject = await storage.getCurrentProject();
+        if (!isCancelled && savedProject) {
+          const syncUpdatedAt = initialSyncProjectRef.current?.updatedAt || 0;
+          const idbUpdatedAt = savedProject.updatedAt || 0;
+          // Apply IndexedDB copy if there was no sync mirror or if IndexedDB is newer
+          if (!initialSyncProjectRef.current || idbUpdatedAt > syncUpdatedAt) {
+            setEventName(savedProject.eventName || '');
+            if (savedProject.sets && savedProject.sets.length > 0) {
+              setSets(savedProject.sets);
+              if (!initialUiRef.current) {
+                setLeftSourceId(savedProject.sets[0].id);
+              }
+            }
+            storage.saveCurrentProjectSync(savedProject);
+          }
+        }
+      } catch (err) {
+        console.error('Failed to load project from IndexedDB:', err);
+      } finally {
+        if (!isCancelled) {
+          hasHydratedProjectRef.current = true;
+        }
+      }
+
       try {
         const [savedSongs, savedLegend] = await Promise.all([
           storage.getSongs(),
           storage.getSingerLegend(),
         ]);
+
+        if (isCancelled) return;
 
         if (savedSongs && savedSongs.length > 0) {
           const enrichedLocal = enrichSongsWithDatabase(savedSongs, undefined, savedLegend);
@@ -285,27 +347,20 @@ function SetlistStudio() {
           }
           handleSyncDatabase(true, false);
         }
-
-        const savedProject = await storage.getCurrentProject();
-        if (savedProject) {
-          if (savedProject.eventName) {
-            setEventName(savedProject.eventName);
-          }
-          if (savedProject.sets && savedProject.sets.length > 0) {
-            setSets(savedProject.sets);
-            setLeftSourceId(savedProject.sets[0].id);
-          }
-        }
       } catch (err) {
-        console.error('Failed to load from IndexedDB:', err);
+        console.error('Failed to load songs from IndexedDB:', err);
       }
     };
 
     loadSavedData();
+    return () => {
+      isCancelled = true;
+    };
   }, []);
 
-  // 2. Auto-save current project to IndexedDB
+  // 2. Auto-save current project (synchronous localStorage mirror + IndexedDB), guarded until hydration completes
   useEffect(() => {
+    if (!hasHydratedProjectRef.current) return;
     const project: EventProject = {
       id: 'current-session',
       eventName,
@@ -314,6 +369,43 @@ function SetlistStudio() {
     };
     storage.saveCurrentProject(project).catch(console.error);
   }, [eventName, sets]);
+
+  // 2b. Persist pane layout state (which sources are open in Left/Right panes)
+  useEffect(() => {
+    storage.saveWorkspaceUiSync({
+      leftSourceId: resolvedLeftSourceId,
+      rightSourceId: resolvedRightSourceId,
+      activePane,
+    });
+  }, [resolvedLeftSourceId, resolvedRightSourceId, activePane]);
+
+  // 2c. Synchronous safety flush on pagehide / visibilitychange (protects against Android pull-to-refresh & app kill)
+  useEffect(() => {
+    const flushNow = () => {
+      if (!hasHydratedProjectRef.current) return;
+      storage.saveCurrentProjectSync({
+        id: 'current-session',
+        eventName: latestProjectRef.current.eventName,
+        sets: latestProjectRef.current.sets,
+        updatedAt: Date.now(),
+      });
+    };
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'hidden') {
+        flushNow();
+      }
+    };
+
+    window.addEventListener('pagehide', flushNow);
+    window.addEventListener('beforeunload', flushNow);
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    return () => {
+      window.removeEventListener('pagehide', flushNow);
+      window.removeEventListener('beforeunload', flushNow);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
+  }, []);
 
   // 3. Sync Database from Backend API (/api/drive/sync)
   const handleSyncDatabase = async (force = true, silent = false) => {
@@ -461,16 +553,19 @@ function SetlistStudio() {
   };
 
   const handleAddSet = () => {
-    const dynamicSets = sets.filter((s) => !s.isFixed);
-    const newIndex = dynamicSets.length + 1;
+    const dynamicCount = sets.filter((s) => !s.isFixed).length;
     const newSet: SetlistGroup = {
       id: `set-${Date.now()}`,
-      name: `Set ${newIndex}`,
+      name: `Set ${dynamicCount + 1}`,
       songIds: [],
     };
 
-    const fixedSets = sets.filter((s) => s.isFixed);
-    const updated = [...dynamicSets, newSet, ...fixedSets];
+    // Preserve custom user ordering: insert right before trailing fixed sets if any, else append
+    let insertIdx = sets.length;
+    while (insertIdx > 0 && sets[insertIdx - 1].isFixed) {
+      insertIdx--;
+    }
+    const updated = [...sets.slice(0, insertIdx), newSet, ...sets.slice(insertIdx)];
     setSets(updated);
 
     // Open new set in the active pane if it's already showing a set,
@@ -897,12 +992,46 @@ function SetlistStudio() {
     );
   };
 
+  // Save updated setlist names, order, colors, or additions from SetlistManagerModal
+  const handleSaveManagedSets = (updatedSets: SetlistGroup[]) => {
+    if (updatedSets.length === 0) return;
+    setSets(updatedSets);
+
+    // Clear selections on panes whose set was deleted or cleared
+    const validIds = new Set(updatedSets.map((s) => s.id));
+    const fallbackId = updatedSets[0].id;
+    if (leftSourceId !== 'library' && !validIds.has(leftSourceId)) {
+      setLeftSourceId(fallbackId);
+      setLeftSelection(new Set());
+    }
+    if (rightSourceId !== 'library' && !validIds.has(rightSourceId)) {
+      setRightSourceId(fallbackId);
+      setRightSelection(new Set());
+    }
+    // Clean any stale indices in case a set was emptied in the manager
+    setLeftSelection((prev) => {
+      if (leftSourceId === 'library') return prev;
+      const target = updatedSets.find((s) => s.id === leftSourceId);
+      if (!target) return new Set();
+      return new Set(Array.from(prev).filter((idx) => idx < target.songIds.length));
+    });
+    setRightSelection((prev) => {
+      if (rightSourceId === 'library') return prev;
+      const target = updatedSets.find((s) => s.id === rightSourceId);
+      if (!target) return new Set();
+      return new Set(Array.from(prev).filter((idx) => idx < target.songIds.length));
+    });
+
+    showSuccess('Změny setlistů byly uloženy.');
+  };
+
   // Total Commander Keyboard Shortcuts (when no modal is open & focus not in an input)
   const anyModalOpen =
     isAdminPanelOpen ||
     isExportOpen ||
     isImportModalOpen ||
     isDisplaySettingsOpen ||
+    isSetlistManagerOpen ||
     pairingSong !== null ||
     inspectedSong !== null;
 
@@ -1267,6 +1396,7 @@ function SetlistStudio() {
         }}
         onPairSelected={(song) => setPairingSong(song)}
         onSwapPanes={handleSwapPanes}
+        onOpenSetlistManager={() => setIsSetlistManagerOpen(true)}
         filter={activeFilter}
         onFilterChange={setActiveFilter}
         onResetFilters={() =>
@@ -1400,6 +1530,14 @@ function SetlistStudio() {
         isInActiveSet={inspectedSong ? detailTargetSet.songIds.includes(inspectedSong.id) : false}
         onClose={() => setInspectedSong(null)}
         onAddSongToActiveSet={handleAddSongFromDetailModal}
+      />
+
+      {/* Setlist Manager Modal (Rename, Reorder, Color, Duplicate, Clear, Delete) */}
+      <SetlistManagerModal
+        isOpen={isSetlistManagerOpen}
+        sets={sets}
+        onClose={() => setIsSetlistManagerOpen(false)}
+        onSaveSets={handleSaveManagedSets}
       />
     </div>
   );

@@ -515,11 +515,11 @@ export const CommanderPane: React.FC<CommanderPaneProps> = ({
         </div>
       </div>
 
-      {/* Scrollable Song List Body */}
+      {/* Scrollable Song List Body (overscroll-y-contain prevents accidental pull-to-refresh mid-scroll on Android) */}
       <div
         role="listbox"
         aria-multiselectable="true"
-        className="flex-1 min-h-0 overflow-y-auto divide-y divide-slate-200/75 dark:divide-slate-800/80 bg-white dark:bg-slate-900/60"
+        className="flex-1 min-h-0 overflow-y-auto overscroll-y-contain divide-y divide-slate-200/75 dark:divide-slate-800/80 bg-white dark:bg-slate-900/60"
       >
         {isLibrary && totalLibraryCount === 0 ? (
           <div className="flex flex-col items-center justify-center h-60 text-center p-6 text-slate-500 dark:text-slate-400">

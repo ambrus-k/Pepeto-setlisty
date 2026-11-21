@@ -24,6 +24,7 @@ import {
   Sparkles,
   Zap,
   AlertTriangle,
+  ListOrdered,
 } from 'lucide-react';
 import { Song } from '../types';
 import { PaneSide } from './SetTabs';
@@ -71,6 +72,7 @@ interface CommanderToolbarProps {
   onInspectSelected: () => void;
   onPairSelected: (song: Song) => void;
   onSwapPanes: () => void;
+  onOpenSetlistManager: () => void;
 
   // Search & Filter (for active pane)
   filter: SongFilterState;
@@ -108,6 +110,7 @@ export const CommanderToolbar: React.FC<CommanderToolbarProps> = ({
   onInspectSelected,
   onPairSelected,
   onSwapPanes,
+  onOpenSetlistManager,
   filter,
   onFilterChange,
   onResetFilters,
@@ -390,6 +393,17 @@ export const CommanderToolbar: React.FC<CommanderToolbarProps> = ({
             aria-label="Prohodit okna"
           >
             <ArrowLeftRight className="w-3.5 h-3.5" />
+          </button>
+
+          {/* MANAGE SETLISTS (Rename, Reorder, Color, Add/Delete) */}
+          <button
+            type="button"
+            onClick={onOpenSetlistManager}
+            className="inline-flex items-center gap-1 rounded-lg px-2 py-1.5 text-xs font-semibold border border-indigo-300 dark:border-indigo-500/50 bg-indigo-50 dark:bg-indigo-950/50 text-indigo-700 dark:text-indigo-200 hover:bg-indigo-100 dark:hover:bg-indigo-900/70 transition cursor-pointer active:scale-95"
+            title="Upravit názvy setlistů, změnit jejich pořadí nebo barvy"
+          >
+            <ListOrdered className="w-3.5 h-3.5 shrink-0" />
+            <span className="hidden sm:inline">Upravit sety</span>
           </button>
         </div>
 
