@@ -42,12 +42,29 @@ function cloneSets(sets: SetlistGroup[]): SetlistGroup[] {
   return sets.map((s) => ({ ...s, songIds: [...s.songIds] }));
 }
 
+const DEFAULT_LIDOVKY_SONG_IDS = [503, 518, 501, 506, 519, 514, 504, 523, 502];
+
 const DEFAULT_SETS: SetlistGroup[] = [
   { id: 'set-1', name: 'Set 1', songIds: [] },
   { id: 'set-2', name: 'Set 2', songIds: [] },
-  { id: 'set-lidovky', name: 'Lidovky', isFixed: true, songIds: [], color: '#fef08a' },
+  { id: 'set-lidovky', name: 'Lidovky', isFixed: true, songIds: [...DEFAULT_LIDOVKY_SONG_IDS], color: '#fef08a' },
   { id: 'set-zbytek', name: 'Zbytek', isFixed: true, songIds: [], color: '#cbd5e1' },
 ];
+
+function createFreshSets(): SetlistGroup[] {
+  const ts = Date.now();
+  const numbered: SetlistGroup[] = Array.from({ length: 9 }, (_, i) => ({
+    id: `set-${ts}-${i + 1}`,
+    name: `Set ${i + 1}`,
+    songIds: [],
+    isFixed: false,
+  }));
+  return [
+    ...numbered,
+    { id: `set-${ts}-lidovky`, name: 'Lidovky', isFixed: true, songIds: [...DEFAULT_LIDOVKY_SONG_IDS], color: '#fef08a' },
+    { id: `set-${ts}-zbytek`, name: 'Zbytek', isFixed: true, songIds: [], color: '#cbd5e1' },
+  ];
+}
 
 const DEFAULT_EXPORT_PROGRESS: ExportProgressState = {
   progress: 0,
@@ -1102,6 +1119,20 @@ function SetlistStudio() {
     showSuccess('Změny setlistů byly uloženy.');
   };
 
+  // Start fresh: clear main event name and create Set 1..9 + Lidovky (default songs) + Zbytek
+  const handleStartFresh = () => {
+    recordHistory('Začít znovu');
+    const freshSets = createFreshSets();
+    setEventName('');
+    setSets(freshSets);
+    setLeftSourceId(freshSets[0].id);
+    setRightSourceId('library');
+    setLeftSelection(new Set());
+    setRightSelection(new Set());
+    lastClickedVisibleIdxRef.current = { left: null, right: null };
+    showSuccess('Nový projekt připraven (Set 1–9, Lidovky, Zbytek). Změnu lze vrátit šipkou Zpět.');
+  };
+
   // Total Commander Keyboard Shortcuts (when no modal is open & focus not in an input)
   const anyModalOpen =
     isAdminPanelOpen ||
@@ -1636,6 +1667,7 @@ function SetlistStudio() {
         sets={sets}
         onClose={() => setIsSetlistManagerOpen(false)}
         onSaveSets={handleSaveManagedSets}
+        onStartFresh={handleStartFresh}
       />
     </div>
   );

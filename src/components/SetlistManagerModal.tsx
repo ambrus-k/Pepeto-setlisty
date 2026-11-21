@@ -29,6 +29,7 @@ import {
   ListOrdered,
   Clock,
   Music,
+  RotateCcw,
 } from 'lucide-react';
 import { SetlistGroup } from '../types';
 
@@ -37,6 +38,7 @@ interface SetlistManagerModalProps {
   sets: SetlistGroup[];
   onClose: () => void;
   onSaveSets: (updatedSets: SetlistGroup[]) => void;
+  onStartFresh: () => void;
 }
 
 const COLOR_PRESETS: { value: string | undefined; label: string; swatch: string }[] = [
@@ -259,16 +261,19 @@ export const SetlistManagerModal: React.FC<SetlistManagerModalProps> = ({
   sets,
   onClose,
   onSaveSets,
+  onStartFresh,
 }) => {
   const [draftSets, setDraftSets] = useState<SetlistGroup[]>([]);
   const [openColorId, setOpenColorId] = useState<string | null>(null);
   const [newlyAddedId, setNewlyAddedId] = useState<string | null>(null);
+  const [isConfirmingReset, setIsConfirmingReset] = useState(false);
 
   useEffect(() => {
     if (isOpen) {
       setDraftSets(sets.map((s) => ({ ...s, songIds: [...s.songIds] })));
       setOpenColorId(null);
       setNewlyAddedId(null);
+      setIsConfirmingReset(false);
     }
   }, [isOpen, sets]);
 
@@ -455,32 +460,80 @@ export const SetlistManagerModal: React.FC<SetlistManagerModalProps> = ({
         </div>
 
         {/* Footer */}
-        <div className="px-4 sm:px-5 py-3 bg-slate-50 dark:bg-slate-950/80 border-t border-slate-200 dark:border-slate-800 flex flex-wrap items-center justify-between gap-2">
-          <button
-            type="button"
-            onClick={handleAddSet}
-            className="inline-flex items-center gap-1.5 rounded-xl border border-dashed border-indigo-400 dark:border-indigo-500/60 bg-indigo-50 dark:bg-indigo-950/40 hover:bg-indigo-100 dark:hover:bg-indigo-900/60 px-3 py-2 text-xs font-bold text-indigo-700 dark:text-indigo-200 transition cursor-pointer active:scale-95"
-          >
-            <Plus className="w-4 h-4" />
-            <span>Přidat nový setlist</span>
-          </button>
+        <div className="px-4 sm:px-5 py-3 bg-slate-50 dark:bg-slate-950/80 border-t border-slate-200 dark:border-slate-800 space-y-2.5">
+          {isConfirmingReset && (
+            <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl bg-rose-50 dark:bg-rose-950/60 border border-rose-300 dark:border-rose-700/70 px-3 py-2 animate-fadeIn">
+              <div className="text-xs text-rose-800 dark:text-rose-200">
+                <strong className="font-bold">Začít od nuly?</strong> Vytvoří se prázdné{' '}
+                <span className="font-semibold">Set 1–9, Lidovky (výchozí písně), Zbytek</span> a smaže se název akce.
+              </div>
+              <div className="flex items-center gap-1.5 ml-auto shrink-0">
+                <button
+                  type="button"
+                  onClick={() => setIsConfirmingReset(false)}
+                  className="px-2.5 py-1 rounded-lg bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 text-slate-700 dark:text-slate-200 text-xs font-semibold hover:bg-slate-100 dark:hover:bg-slate-700 transition cursor-pointer"
+                >
+                  Zrušit
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsConfirmingReset(false);
+                    onStartFresh();
+                    onClose();
+                  }}
+                  className="inline-flex items-center gap-1 px-3 py-1 rounded-lg bg-rose-600 hover:bg-rose-500 text-white text-xs font-bold shadow-xs transition active:scale-95 cursor-pointer"
+                >
+                  <RotateCcw className="w-3.5 h-3.5" />
+                  <span>Ano, začít znovu</span>
+                </button>
+              </div>
+            </div>
+          )}
 
-          <div className="flex items-center gap-2 ml-auto">
-            <button
-              type="button"
-              onClick={onClose}
-              className="px-3.5 py-2 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 text-xs font-semibold transition cursor-pointer"
-            >
-              Zrušit
-            </button>
-            <button
-              type="button"
-              onClick={handleSave}
-              className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold shadow-sm shadow-indigo-600/25 transition active:scale-95 cursor-pointer"
-            >
-              <Check className="w-4 h-4" />
-              <span>Uložit změny</span>
-            </button>
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={handleAddSet}
+                className="inline-flex items-center gap-1.5 rounded-xl border border-dashed border-indigo-400 dark:border-indigo-500/60 bg-indigo-50 dark:bg-indigo-950/40 hover:bg-indigo-100 dark:hover:bg-indigo-900/60 px-3 py-2 text-xs font-bold text-indigo-700 dark:text-indigo-200 transition cursor-pointer active:scale-95"
+              >
+                <Plus className="w-4 h-4" />
+                <span>Přidat nový setlist</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setIsConfirmingReset((prev) => !prev)}
+                className={`inline-flex items-center gap-1.5 rounded-xl border px-3 py-2 text-xs font-bold transition cursor-pointer active:scale-95 ${
+                  isConfirmingReset
+                    ? 'bg-rose-600 border-rose-600 text-white'
+                    : 'border-rose-300 dark:border-rose-700/70 bg-rose-50 dark:bg-rose-950/40 hover:bg-rose-100 dark:hover:bg-rose-900/60 text-rose-700 dark:text-rose-300'
+                }`}
+                title="Vymazat název setlistu a vytvořit prázdné Set 1–9, Lidovky (výchozí písně) a Zbytek"
+              >
+                <RotateCcw className="w-3.5 h-3.5" />
+                <span>Začít znovu</span>
+              </button>
+            </div>
+
+            <div className="flex items-center gap-2 ml-auto">
+              <button
+                type="button"
+                onClick={onClose}
+                className="px-3.5 py-2 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 text-xs font-semibold transition cursor-pointer"
+              >
+                Zrušit
+              </button>
+              <button
+                type="button"
+                onClick={handleSave}
+                className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold shadow-sm shadow-indigo-600/25 transition active:scale-95 cursor-pointer"
+              >
+                <Check className="w-4 h-4" />
+                <span>Uložit změny</span>
+              </button>
+            </div>
           </div>
         </div>
       </div>

@@ -141,7 +141,7 @@ export function generateMssXml(
   setsToExport.forEach((set, index) => {
     const numPrefix = String(index + 1).padStart(2, '0');
     let setlistName = `${numPrefix} ${safeProjectName}`;
-    if (set.isFixed || !set.name.toLowerCase().startsWith('set')) {
+    if (set.isFixed || !/^set(?:list)?\s+\d+/i.test(set.name.trim())) {
       setlistName = `${numPrefix} ${safeProjectName} - ${set.name}`;
     }
 
@@ -216,8 +216,8 @@ export async function generatePdf(
 
     // Determine Set Title: "List 1", "List 2", "Lidovky", "Zbytek"
     let listTitle = set.name;
-    if (set.name.toLowerCase().startsWith('set')) {
-      listTitle = set.name.replace(/^set\s*/i, 'List ');
+    if (/^set(?:list)?\s+\d+/i.test(set.name.trim())) {
+      listTitle = set.name.trim().replace(/^set(?:list)?\s+/i, 'List ');
     }
 
     // Page Header: centered List title
