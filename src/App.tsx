@@ -1332,7 +1332,7 @@ function SetlistStudio() {
 
   return (
     <div className="tc-app-shell bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 flex flex-col font-sans selection:bg-indigo-500/30 selection:text-indigo-900 dark:selection:text-indigo-200 transition-colors">
-      {/* Row 1: Compact Header (Logo + Setlist Name + Combined Import/Export + Settings + Logout) */}
+      {/* Row 1: Compact Header (Logo + Setlist Name + Upravit sety + Combined Import/Export + Settings + Logout) */}
       <Header
         eventName={eventName}
         onEventNameChange={setEventName}
@@ -1345,6 +1345,7 @@ function SetlistStudio() {
         onDirectFileImport={handleDirectFileImport}
         onOpenImportModal={() => setIsImportModalOpen(true)}
         onOpenDisplaySettings={() => setIsDisplaySettingsOpen(true)}
+        onOpenSetlistManager={() => setIsSetlistManagerOpen(true)}
       />
 
       {/* Sync feedback notification banner if any */}
@@ -1396,7 +1397,6 @@ function SetlistStudio() {
         }}
         onPairSelected={(song) => setPairingSong(song)}
         onSwapPanes={handleSwapPanes}
-        onOpenSetlistManager={() => setIsSetlistManagerOpen(true)}
         filter={activeFilter}
         onFilterChange={setActiveFilter}
         onResetFilters={() =>

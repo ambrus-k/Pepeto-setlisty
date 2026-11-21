@@ -9,6 +9,7 @@ import {
   ChevronDown,
   ArrowLeftRight,
   FolderOpen,
+  ListOrdered,
 } from 'lucide-react';
 import { UserRole } from '../types';
 import { PWAInstallButton } from './PWAInstallButton';
@@ -25,6 +26,7 @@ interface HeaderProps {
   onDirectFileImport: (file: File) => void;
   onOpenImportModal: () => void;
   onOpenDisplaySettings: () => void;
+  onOpenSetlistManager: () => void;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -39,6 +41,7 @@ export const Header: React.FC<HeaderProps> = ({
   onDirectFileImport,
   onOpenImportModal,
   onOpenDisplaySettings,
+  onOpenSetlistManager,
 }) => {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const ioMenuRef = useRef<HTMLDivElement>(null);
@@ -76,9 +79,9 @@ export const Header: React.FC<HeaderProps> = ({
   return (
     <header className="sticky top-0 z-30 shrink-0 bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border-b border-slate-200 dark:border-slate-800 shadow-xs transition-colors">
       <div className="max-w-[1600px] mx-auto px-2.5 sm:px-4 py-1.5">
-        {/* Single Top Row: [Logo] [Setlist Name Input] [Import / Export ▼] [PWA] [Settings] [Logout] */}
-        <div className="flex items-center gap-2 sm:gap-3">
-          {/* Logo ONLY (no "Pepeto Setlisty" text) */}
+        {/* Row 1 (Práce se setlisty): [Logo] [Název setlistu] [Upravit sety] [Import / Export ▼] [PWA] [⚙] [↪] */}
+        <div className="flex items-center gap-1.5 sm:gap-2">
+          {/* Logo ONLY */}
           <div
             className="flex h-8 shrink-0 items-center justify-center rounded-lg bg-[#3f3847] px-2 py-1 shadow-sm border border-white/10"
             title="PEPETO hudební skupina"
@@ -90,11 +93,11 @@ export const Header: React.FC<HeaderProps> = ({
             />
           </div>
 
-          {/* Setlist Name Input right next to Logo */}
-          <div className="flex items-center gap-2 flex-1 min-w-0 max-w-xl">
+          {/* Shortened Setlist Name Input right next to Logo */}
+          <div className="flex items-center gap-1.5 flex-1 min-w-[6.5rem] max-w-[13rem] sm:max-w-[17rem] lg:max-w-[22rem]">
             <label
               htmlFor="eventNameInput"
-              className="text-[0.6875rem] font-semibold uppercase tracking-wider text-indigo-600 dark:text-indigo-400 shrink-0 hidden md:inline"
+              className="text-[0.6875rem] font-semibold uppercase tracking-wider text-indigo-600 dark:text-indigo-400 shrink-0 hidden lg:inline"
             >
               Setlist:
             </label>
@@ -103,10 +106,22 @@ export const Header: React.FC<HeaderProps> = ({
               type="text"
               value={eventName}
               onChange={(e) => onEventNameChange(e.target.value)}
-              placeholder="Název setlistu / akce..."
-              className="w-full rounded-lg bg-slate-100 dark:bg-slate-800/90 border border-slate-300 dark:border-slate-700 px-2.5 py-1 text-sm font-semibold text-slate-900 dark:text-white placeholder-slate-400 dark:placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition"
+              placeholder="Název setlistu..."
+              className="w-full rounded-lg bg-slate-100 dark:bg-slate-800/90 border border-slate-300 dark:border-slate-700 px-2.5 py-1 text-xs sm:text-sm font-semibold text-slate-900 dark:text-white placeholder-slate-400 dark:placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition"
             />
           </div>
+
+          {/* Upravit sety button right next to Setlist Name & Import/Export */}
+          <button
+            type="button"
+            onClick={onOpenSetlistManager}
+            className="inline-flex items-center gap-1.5 rounded-lg border border-indigo-300 dark:border-indigo-500/50 bg-indigo-50 dark:bg-indigo-950/50 hover:bg-indigo-100 dark:hover:bg-indigo-900/70 px-2 sm:px-2.5 py-1.5 text-xs font-semibold text-indigo-700 dark:text-indigo-200 transition active:scale-95 cursor-pointer shrink-0"
+            title="Upravit názvy setlistů, změnit jejich pořadí nebo barvy"
+          >
+            <ListOrdered className="w-3.5 h-3.5 shrink-0" />
+            <span className="hidden sm:inline">Upravit sety</span>
+            <span className="sm:hidden">Sety</span>
+          </button>
 
           {/* Right Action Controls */}
           <div className="flex items-center gap-1.5 shrink-0 ml-auto">
@@ -127,11 +142,14 @@ export const Header: React.FC<HeaderProps> = ({
                 disabled={isExporting}
                 aria-expanded={isIoMenuOpen}
                 aria-haspopup="menu"
-                className="flex items-center gap-1.5 rounded-lg bg-gradient-to-r from-indigo-600 via-indigo-500 to-violet-600 hover:from-indigo-500 hover:to-violet-500 px-2.5 sm:px-3 py-1.5 text-xs font-bold text-white shadow-sm shadow-indigo-600/25 transition active:scale-95 disabled:opacity-50 disabled:pointer-events-none cursor-pointer"
+                className="flex items-center gap-1 sm:gap-1.5 rounded-lg bg-gradient-to-r from-indigo-600 via-indigo-500 to-violet-600 hover:from-indigo-500 hover:to-violet-500 px-2 sm:px-3 py-1.5 text-xs font-bold text-white shadow-sm shadow-indigo-600/25 transition active:scale-95 disabled:opacity-50 disabled:pointer-events-none cursor-pointer"
                 title="Import a export setlistů (.mss, .xlsx, PDF, Google Disk)"
               >
                 <ArrowLeftRight className="w-3.5 h-3.5 shrink-0" />
-                <span>{isExporting ? 'Exportuji...' : 'Import / Export'}</span>
+                <span className="hidden sm:inline">
+                  {isExporting ? 'Exportuji...' : 'Import / Export'}
+                </span>
+                <span className="sm:hidden">{isExporting ? '...' : 'I/O'}</span>
                 <ChevronDown
                   className={`w-3.5 h-3.5 shrink-0 transition-transform ${
                     isIoMenuOpen ? 'rotate-180' : ''

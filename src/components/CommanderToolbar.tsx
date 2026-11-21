@@ -1,15 +1,13 @@
 import React, { useState, useRef, useEffect } from 'react';
 import {
   Copy,
-  MoveRight,
-  MoveLeft,
+  Scissors,
   ArrowUp,
   ArrowDown,
   Trash2,
   Search,
   Filter,
   X,
-  ChevronDown,
   CheckSquare,
   Square,
   HelpCircle,
@@ -24,7 +22,6 @@ import {
   Sparkles,
   Zap,
   AlertTriangle,
-  ListOrdered,
 } from 'lucide-react';
 import { Song } from '../types';
 import { PaneSide } from './SetTabs';
@@ -72,7 +69,6 @@ interface CommanderToolbarProps {
   onInspectSelected: () => void;
   onPairSelected: (song: Song) => void;
   onSwapPanes: () => void;
-  onOpenSetlistManager: () => void;
 
   // Search & Filter (for active pane)
   filter: SongFilterState;
@@ -110,7 +106,6 @@ export const CommanderToolbar: React.FC<CommanderToolbarProps> = ({
   onInspectSelected,
   onPairSelected,
   onSwapPanes,
-  onOpenSetlistManager,
   filter,
   onFilterChange,
   onResetFilters,
@@ -183,27 +178,18 @@ export const CommanderToolbar: React.FC<CommanderToolbarProps> = ({
   return (
     <div
       ref={filtersContainerRef}
-      className="relative shrink-0 bg-slate-100/90 dark:bg-slate-900/95 border-b border-slate-200 dark:border-slate-800 px-2.5 sm:px-4 py-1.5 transition-colors z-20"
+      className="relative shrink-0 bg-slate-100/90 dark:bg-slate-900/95 border-b border-slate-200 dark:border-slate-800 px-2.5 sm:px-4 py-1 transition-colors z-20"
     >
-      <div className="max-w-[1600px] mx-auto flex flex-wrap items-center justify-between gap-1.5 sm:gap-2">
-        {/* LEFT GROUP: Total Commander Operations for Active Pane */}
-        <div className="flex flex-wrap items-center gap-1 sm:gap-1.5">
-          {/* Active pane indicator pill */}
-          <span
-            className="hidden xl:inline-flex items-center gap-1 rounded-md bg-indigo-100 dark:bg-indigo-950/80 border border-indigo-200 dark:border-indigo-700/70 px-2 py-1 text-[0.6875rem] font-bold text-indigo-700 dark:text-indigo-200 shrink-0"
-            title={`Aktivní okno: ${activePane === 'left' ? 'Levé' : 'Pravé'} (${activeSourceLabel})`}
-          >
-            <span className="w-1.5 h-1.5 rounded-full bg-indigo-500" />
-            <span>{activePane === 'left' ? 'L:' : 'P:'}</span>
-            <span className="max-w-[7rem] truncate">{activeSourceLabel}</span>
-          </span>
-
-          {/* COPY (F5) */}
+      {/* Single Compact Editing Row — guaranteed 1 line on Android tablet landscape & desktop */}
+      <div className="max-w-[1600px] mx-auto flex flex-nowrap items-center justify-between gap-1.5 overflow-x-auto horizontal-scroll-row">
+        {/* LEFT GROUP: Compact Icon-Only Total Commander Editing Buttons */}
+        <div className="flex flex-nowrap items-center gap-1 shrink-0">
+          {/* COPY (F5) — Classic Windows Copy icon + direction arrow */}
           <button
             type="button"
             onClick={onCopy}
             disabled={!canCopy}
-            className={`inline-flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-xs font-bold transition cursor-pointer active:scale-95 border ${
+            className={`inline-flex items-center gap-0.5 rounded-lg px-2 py-1.5 text-xs font-bold transition cursor-pointer active:scale-95 border shrink-0 ${
               canCopy
                 ? 'bg-indigo-600 hover:bg-indigo-500 text-white border-indigo-500 shadow-xs shadow-indigo-600/20'
                 : 'bg-white dark:bg-slate-800/70 text-slate-400 dark:text-slate-500 border-slate-200 dark:border-slate-700/70 opacity-60 cursor-not-allowed'
@@ -211,26 +197,26 @@ export const CommanderToolbar: React.FC<CommanderToolbarProps> = ({
             title={
               canCopy
                 ? `Kopírovat vybrané (${selectedCount}) do: ${targetSourceLabel} (F5)`
-                : copyDisabledReason || 'Nejprve označte skladby v aktivním okně'
+                : copyDisabledReason || 'Kopírovat vybrané do druhého okna (F5)'
             }
+            aria-label="Kopírovat"
           >
-            {!isGoingRight && <ArrowLeft className="w-3.5 h-3.5 shrink-0" />}
+            {!isGoingRight && <ArrowLeft className="w-3 h-3 shrink-0" />}
             <Copy className="w-3.5 h-3.5 shrink-0" />
-            <span>Kopírovat</span>
             {selectedCount > 0 && canCopy && (
               <span className="rounded bg-white/25 px-1 text-[0.625rem] font-mono leading-tight">
                 {selectedCount}
               </span>
             )}
-            {isGoingRight && <ArrowRight className="w-3.5 h-3.5 shrink-0" />}
+            {isGoingRight && <ArrowRight className="w-3 h-3 shrink-0" />}
           </button>
 
-          {/* MOVE (F6) */}
+          {/* MOVE (F6) — Classic Windows Cut/Move Scissors icon + direction arrow */}
           <button
             type="button"
             onClick={onMove}
             disabled={!canMove}
-            className={`inline-flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-xs font-semibold transition cursor-pointer active:scale-95 border ${
+            className={`inline-flex items-center gap-0.5 rounded-lg px-2 py-1.5 text-xs font-bold transition cursor-pointer active:scale-95 border shrink-0 ${
               canMove
                 ? 'bg-emerald-600 hover:bg-emerald-500 text-white border-emerald-500 shadow-xs'
                 : 'bg-white dark:bg-slate-800/70 text-slate-400 dark:text-slate-500 border-slate-200 dark:border-slate-700/70 opacity-60 cursor-not-allowed'
@@ -238,24 +224,17 @@ export const CommanderToolbar: React.FC<CommanderToolbarProps> = ({
             title={
               canMove
                 ? `Přesunout vybrané (${selectedCount}) do: ${targetSourceLabel} (F6)`
-                : moveDisabledReason || 'Přesouvat lze pouze mezi dvěma různými setlisty'
+                : moveDisabledReason || 'Přesunout vybrané do druhého setlistu (F6)'
             }
+            aria-label="Přesunout"
           >
-            {isGoingRight ? (
-              <>
-                <MoveRight className="w-3.5 h-3.5 shrink-0" />
-                <span className="hidden sm:inline">Přesunout</span>
-              </>
-            ) : (
-              <>
-                <MoveLeft className="w-3.5 h-3.5 shrink-0" />
-                <span className="hidden sm:inline">Přesunout</span>
-              </>
-            )}
+            {!isGoingRight && <ArrowLeft className="w-3 h-3 shrink-0" />}
+            <Scissors className="w-3.5 h-3.5 shrink-0" />
+            {isGoingRight && <ArrowRight className="w-3 h-3 shrink-0" />}
           </button>
 
           {/* Reorder Up & Down */}
-          <div className="inline-flex items-center rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800/90 overflow-hidden shadow-2xs">
+          <div className="inline-flex items-center rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800/90 overflow-hidden shadow-2xs shrink-0">
             <button
               type="button"
               onClick={onMoveUp}
@@ -286,12 +265,12 @@ export const CommanderToolbar: React.FC<CommanderToolbarProps> = ({
             </button>
           </div>
 
-          {/* REMOVE (F8 / Del) */}
+          {/* REMOVE (F8 / Del) — Trash icon ONLY */}
           <button
             type="button"
             onClick={onRemove}
             disabled={!canRemove}
-            className={`inline-flex items-center gap-1 rounded-lg px-2 py-1.5 text-xs font-semibold transition cursor-pointer active:scale-95 border ${
+            className={`inline-flex items-center justify-center rounded-lg p-1.5 transition cursor-pointer active:scale-95 border shrink-0 ${
               canRemove
                 ? 'bg-rose-50 dark:bg-rose-950/60 hover:bg-rose-600 text-rose-700 dark:text-rose-300 hover:text-white border-rose-300 dark:border-rose-600/60'
                 : 'bg-white dark:bg-slate-800/70 text-slate-400 dark:text-slate-500 border-slate-200 dark:border-slate-700/70 opacity-60 cursor-not-allowed'
@@ -301,24 +280,23 @@ export const CommanderToolbar: React.FC<CommanderToolbarProps> = ({
                 ? `Odstranit vybrané (${selectedCount}) ze setlistu (Del / F8)`
                 : isActiveLibrary
                 ? 'Z Knihovny nelze skladby odstraňovat'
-                : 'Označte skladby ke smazání ze setu'
+                : 'Odstranit označené skladby ze setu'
             }
             aria-label="Odstranit"
           >
             <Trash2 className="w-3.5 h-3.5 shrink-0" />
-            <span className="hidden md:inline">Odstranit</span>
           </button>
 
-          <div className="h-5 w-px bg-slate-300 dark:bg-slate-700 mx-0.5 hidden sm:block" />
+          <div className="h-4 w-px bg-slate-300 dark:bg-slate-700 mx-0.5 shrink-0" />
 
-          {/* SELECT ALL / CLEAR SELECTION */}
+          {/* SELECT ALL / CLEAR SELECTION — Compact icon + count */}
           <button
             type="button"
             onClick={selectedCount > 0 && allVisibleSelected ? onClearSelection : onToggleSelectAll}
             disabled={visibleCount === 0}
-            className={`inline-flex items-center gap-1 rounded-lg px-2 py-1.5 text-xs font-semibold transition cursor-pointer border ${
+            className={`inline-flex items-center gap-1 rounded-lg p-1.5 text-xs font-semibold transition cursor-pointer border shrink-0 ${
               selectedCount > 0
-                ? 'bg-indigo-50 dark:bg-indigo-950/60 border-indigo-300 dark:border-indigo-600/60 text-indigo-700 dark:text-indigo-200 hover:bg-indigo-100 dark:hover:bg-indigo-900/60'
+                ? 'bg-indigo-50 dark:bg-indigo-950/60 border-indigo-300 dark:border-indigo-600/60 text-indigo-700 dark:text-indigo-200 hover:bg-indigo-100 dark:hover:bg-indigo-900/60 px-2'
                 : 'bg-white dark:bg-slate-800/90 border-slate-300 dark:border-slate-700 text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700'
             } disabled:opacity-40 disabled:pointer-events-none`}
             title={
@@ -326,17 +304,15 @@ export const CommanderToolbar: React.FC<CommanderToolbarProps> = ({
                 ? 'Zrušit označení v aktivním okně (Esc)'
                 : 'Označit všechny zobrazené skladby v aktivním okně (Ctrl+A)'
             }
+            aria-label="Označit vše"
           >
             {allVisibleSelected && visibleCount > 0 ? (
               <CheckSquare className="w-3.5 h-3.5 text-indigo-600 dark:text-indigo-400" />
             ) : (
               <Square className="w-3.5 h-3.5" />
             )}
-            <span className="hidden lg:inline">
-              {selectedCount > 0 ? `Vybráno (${selectedCount})` : 'Vše'}
-            </span>
             {selectedCount > 0 && (
-              <span className="lg:hidden font-mono text-[0.6875rem] font-bold">
+              <span className="font-mono text-[0.6875rem] font-bold leading-none">
                 {selectedCount}
               </span>
             )}
@@ -346,7 +322,7 @@ export const CommanderToolbar: React.FC<CommanderToolbarProps> = ({
             <button
               type="button"
               onClick={onClearSelection}
-              className="p-1.5 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800/90 text-slate-500 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-700 transition cursor-pointer"
+              className="p-1.5 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800/90 text-slate-500 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-700 transition cursor-pointer shrink-0"
               title="Zrušit výběr (Esc)"
               aria-label="Zrušit výběr"
             >
@@ -354,12 +330,12 @@ export const CommanderToolbar: React.FC<CommanderToolbarProps> = ({
             </button>
           )}
 
-          {/* SONG DETAIL (?) */}
+          {/* SONG DETAIL (?) — Question mark icon ONLY */}
           <button
             type="button"
             onClick={onInspectSelected}
             disabled={!canInspect}
-            className="inline-flex items-center gap-1 rounded-lg px-2 py-1.5 text-xs font-semibold border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800/90 text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700 disabled:opacity-35 disabled:pointer-events-none transition cursor-pointer"
+            className="inline-flex items-center justify-center rounded-lg p-1.5 border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800/90 text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700 disabled:opacity-35 disabled:pointer-events-none transition cursor-pointer shrink-0"
             title={
               canInspect
                 ? 'Zobrazit detail a metadata vybrané skladby'
@@ -368,7 +344,6 @@ export const CommanderToolbar: React.FC<CommanderToolbarProps> = ({
             aria-label="Detail skladby"
           >
             <HelpCircle className="w-3.5 h-3.5 text-indigo-500 dark:text-indigo-400" />
-            <span className="hidden lg:inline">Detail</span>
           </button>
 
           {/* MANUAL PAIR (only shown when selected song is unmatched) */}
@@ -376,81 +351,73 @@ export const CommanderToolbar: React.FC<CommanderToolbarProps> = ({
             <button
               type="button"
               onClick={() => onPairSelected(unmatchedSelectedSong)}
-              className="inline-flex items-center gap-1 rounded-lg px-2 py-1.5 text-xs font-bold bg-amber-500 hover:bg-amber-400 text-white shadow-xs transition cursor-pointer"
+              className="inline-flex items-center gap-1 rounded-lg p-1.5 sm:px-2 text-xs font-bold bg-amber-500 hover:bg-amber-400 text-white shadow-xs transition cursor-pointer shrink-0"
               title="Ručně spárovat nenalezenou skladbu s databází"
+              aria-label="Spárovat skladbu"
             >
               <AlertTriangle className="w-3.5 h-3.5" />
-              <span>Spárovat</span>
             </button>
           )}
 
-          {/* SWAP PANES (Ctrl+U) */}
+          {/* SWAP PANES */}
           <button
             type="button"
             onClick={onSwapPanes}
-            className="p-1.5 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800/90 text-slate-600 dark:text-slate-300 hover:text-indigo-600 dark:hover:text-indigo-300 hover:bg-slate-100 dark:hover:bg-slate-700 transition cursor-pointer"
+            className="p-1.5 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800/90 text-slate-600 dark:text-slate-300 hover:text-indigo-600 dark:hover:text-indigo-300 hover:bg-slate-100 dark:hover:bg-slate-700 transition cursor-pointer shrink-0"
             title="Prohodit obsah levého a pravého okna"
             aria-label="Prohodit okna"
           >
             <ArrowLeftRight className="w-3.5 h-3.5" />
           </button>
-
-          {/* MANAGE SETLISTS (Rename, Reorder, Color, Add/Delete) */}
-          <button
-            type="button"
-            onClick={onOpenSetlistManager}
-            className="inline-flex items-center gap-1 rounded-lg px-2 py-1.5 text-xs font-semibold border border-indigo-300 dark:border-indigo-500/50 bg-indigo-50 dark:bg-indigo-950/50 text-indigo-700 dark:text-indigo-200 hover:bg-indigo-100 dark:hover:bg-indigo-900/70 transition cursor-pointer active:scale-95"
-            title="Upravit názvy setlistů, změnit jejich pořadí nebo barvy"
-          >
-            <ListOrdered className="w-3.5 h-3.5 shrink-0" />
-            <span className="hidden sm:inline">Upravit sety</span>
-          </button>
         </div>
 
-        {/* RIGHT GROUP: Search & Intelligent Filters (for Active Pane) */}
-        <div className="flex items-center gap-1.5 flex-1 sm:flex-initial justify-end min-w-[14rem] max-w-md">
+        {/* RIGHT GROUP: Compact Search Input + Icon-Only Filter Button */}
+        <div className="flex flex-nowrap items-center gap-1 flex-1 min-w-[8.5rem] max-w-sm justify-end">
           {/* Search Input */}
-          <div className="relative flex-1 min-w-[9rem]">
-            <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
+          <div className="relative flex-1 min-w-[6.5rem]">
+            <Search className="w-3.5 h-3.5 absolute left-2 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
             <input
               type="text"
               value={filter.searchQuery}
               onChange={(e) =>
                 onFilterChange((prev) => ({ ...prev, searchQuery: e.target.value }))
               }
-              placeholder={`Hledat v: ${activeSourceLabel}...`}
-              className="w-full pl-8 pr-7 py-1.5 rounded-lg bg-white dark:bg-slate-800/95 border border-slate-300 dark:border-slate-700 text-xs font-medium text-slate-900 dark:text-white placeholder-slate-400 dark:placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition"
+              placeholder={`Hledat (${activeSourceLabel})...`}
+              className="w-full pl-7 pr-6 py-1 rounded-lg bg-white dark:bg-slate-800/95 border border-slate-300 dark:border-slate-700 text-xs font-medium text-slate-900 dark:text-white placeholder-slate-400 dark:placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition"
             />
             {filter.searchQuery && (
               <button
                 type="button"
                 onClick={() => onFilterChange((prev) => ({ ...prev, searchQuery: '' }))}
-                className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-700 dark:hover:text-white cursor-pointer"
+                className="absolute right-1.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-700 dark:hover:text-white cursor-pointer"
                 title="Vymazat hledání"
+                aria-label="Vymazat hledání"
               >
                 <X className="w-3.5 h-3.5" />
               </button>
             )}
           </div>
 
-          {/* Quick Reset when filters active & panel closed */}
+          {/* Quick Reset X when filters active & panel closed */}
           {activeFilterCount > 0 && !isFiltersOpen && (
             <button
               type="button"
               onClick={onResetFilters}
-              className="rounded-lg px-2 py-1.5 text-xs font-semibold text-rose-600 dark:text-rose-400 bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-700/50 hover:bg-rose-100 dark:hover:bg-rose-950/70 transition flex items-center gap-1 cursor-pointer shrink-0"
+              className="rounded-lg p-1.5 text-rose-600 dark:text-rose-400 bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-700/50 hover:bg-rose-100 dark:hover:bg-rose-950/70 transition cursor-pointer shrink-0"
               title="Zrušit všechny aktivní filtry aktivního okna"
+              aria-label="Zrušit filtry"
             >
               <X className="w-3.5 h-3.5" />
             </button>
           )}
 
-          {/* Filters Dropdown Toggle */}
+          {/* Filters Toggle — Filter icon ONLY (+ tiny active count pill when > 0) */}
           <button
             type="button"
             onClick={() => setIsFiltersOpen((prev) => !prev)}
             aria-expanded={isFiltersOpen}
-            className={`inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-semibold transition cursor-pointer border shrink-0 ${
+            aria-label="Filtry a řazení"
+            className={`relative inline-flex items-center gap-1 rounded-lg p-1.5 text-xs font-semibold transition cursor-pointer border shrink-0 ${
               activeFilterCount > 0 || isFiltersOpen
                 ? 'bg-indigo-50 dark:bg-indigo-500/20 text-indigo-700 dark:text-indigo-200 border-indigo-400 dark:border-indigo-500/60'
                 : 'bg-white dark:bg-slate-800/90 text-slate-700 dark:text-slate-200 border-slate-300 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-700'
@@ -458,17 +425,11 @@ export const CommanderToolbar: React.FC<CommanderToolbarProps> = ({
             title={`Filtry a řazení pro aktivní okno (${activeSourceLabel})`}
           >
             <Filter className="w-3.5 h-3.5" />
-            <span>Filtry</span>
             {activeFilterCount > 0 && (
-              <span className="rounded-full bg-indigo-600 text-white text-[0.625rem] font-bold px-1.5 py-0.2 leading-tight">
+              <span className="rounded-full bg-indigo-600 text-white text-[0.625rem] font-bold px-1 leading-tight">
                 {activeFilterCount}
               </span>
             )}
-            <ChevronDown
-              className={`w-3.5 h-3.5 transition-transform ${
-                isFiltersOpen ? 'rotate-180' : ''
-              }`}
-            />
           </button>
         </div>
       </div>
@@ -476,7 +437,7 @@ export const CommanderToolbar: React.FC<CommanderToolbarProps> = ({
       {/* FLOATING UNIFIED INTELLIGENT FILTERS & SORTING PANEL */}
       {isFiltersOpen && (
         <div className="max-w-[1600px] mx-auto relative">
-          <div className="mt-2 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 p-3 sm:p-4 space-y-3 shadow-2xl max-h-[65vh] overflow-y-auto animate-fadeIn">
+          <div className="mt-2 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 p-3 sm:p-4 space-y-3 shadow-2xl max-h-[65vh] overflow-y-auto overscroll-contain animate-fadeIn">
             <div className="flex items-center justify-between gap-2">
               <div className="flex items-center gap-2">
                 <span className="text-xs font-bold uppercase tracking-wider text-slate-600 dark:text-slate-300">
