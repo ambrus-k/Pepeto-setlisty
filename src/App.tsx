@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { Song, SetlistGroup, EventProject } from './types';
 import { storage } from './services/storage';
 import { generateMssXml, generatePdf, downloadFile } from './services/exportGenerator';
@@ -6,9 +6,9 @@ import { useOnlineStatus } from './hooks/useOnlineStatus';
 import { useAuth } from './context/AuthContext';
 import { LoginScreen } from './components/LoginScreen';
 import { Header } from './components/Header';
-import { SetTabs } from './components/SetTabs';
-import { ActiveSetColumn } from './components/ActiveSetColumn';
-import { LibraryColumn } from './components/LibraryColumn';
+import { SetTabs, PaneSide } from './components/SetTabs';
+import { CommanderToolbar } from './components/CommanderToolbar';
+import { CommanderPane, PaneDisplayRow } from './components/CommanderPane';
 import { ExportModal, ExportProgressState } from './components/ExportModal';
 import { AdminPanelModal } from './components/AdminPanelModal';
 import { OfflineIndicator } from './components/OfflineIndicator';
@@ -19,6 +19,15 @@ import { DisplaySettingsModal } from './components/DisplaySettingsModal';
 import { SongDetailModal } from './components/SongDetailModal';
 import { importMssText, importXlsxBuffer, ImportResult } from './services/importSetlist';
 import { enrichSongsWithDatabase, getBundledDatabaseSongs } from './services/songEnricher';
+import {
+  SongFilterState,
+  DEFAULT_SONG_FILTER,
+  buildCategoryOptions,
+  extractSingers,
+  hasAnySearchOrFilter,
+  matchesSongFilter,
+  compareSongsBySort,
+} from './utils/songFilters';
 
 const DEFAULT_SETS: SetlistGroup[] = [
   { id: 'set-1', name: 'Set 1', songIds: [] },
@@ -41,16 +50,108 @@ const DEFAULT_EXPORT_PROGRESS: ExportProgressState = {
   logs: [],
 };
 
+function formatCzechSongCount(count: number): string {
+  if (count === 1) return '1 skladba';
+  if (count >= 2 && count <= 4) return `${count} skladby`;
+  return `${count} skladeb`;
+}
+
+function buildPaneData(
+  sourceId: string,
+  filter: SongFilterState,
+  songs: Song[],
+  sets: SetlistGroup[],
+  songsMap: Map<number, Song>,
+  assignedSongIds: Map<number, string>
+): {
+  isLibrary: boolean;
+  setGroup?: SetlistGroup;
+  sourceLabel: string;
+  totalCount: number;
+  rows: PaneDisplayRow[];
+  hasFilter: boolean;
+} {
+  const hasFilter = hasAnySearchOrFilter(filter);
+
+  if (sourceId === 'library') {
+    const matched = songs.filter((song) =>
+      matchesSongFilter(song, song.id, filter, assignedSongIds)
+    );
+    const ordered =
+      filter.sortBy === 'default'
+        ? matched
+        : [...matched].sort((a, b) => compareSongsBySort(a, a.id, b, b.id, filter.sortBy));
+
+    return {
+      isLibrary: true,
+      sourceLabel: 'Knihovna skladeb',
+      totalCount: songs.length,
+      rows: ordered.map((song) => ({
+        rowKey: song.id,
+        songId: song.id,
+        song,
+      })),
+      hasFilter,
+    };
+  }
+
+  const setGroup = sets.find((s) => s.id === sourceId) || sets[0] || DEFAULT_SETS[0];
+  const entries: PaneDisplayRow[] = setGroup.songIds.map((songId, originalIndex) => ({
+    rowKey: originalIndex,
+    songId,
+    song: songsMap.get(songId),
+    originalIndex,
+  }));
+
+  const matched = hasFilter
+    ? entries.filter((entry) =>
+        matchesSongFilter(entry.song, entry.songId, filter, assignedSongIds)
+      )
+    : entries;
+
+  const ordered =
+    filter.sortBy === 'default'
+      ? matched
+      : [...matched].sort((a, b) =>
+          compareSongsBySort(a.song, a.songId, b.song, b.songId, filter.sortBy)
+        );
+
+  return {
+    isLibrary: false,
+    setGroup,
+    sourceLabel: setGroup.name,
+    totalCount: setGroup.songIds.length,
+    rows: ordered,
+    hasFilter,
+  };
+}
+
 function SetlistStudio() {
   const isOnline = useOnlineStatus();
   const { role, logout } = useAuth();
   const { showSuccess, showError, showWarning } = useToast();
 
-  // App State - event name and setlist groups
+  // App State - event name, setlist groups, and master song database
   const [eventName, setEventName] = useState<string>('');
   const [sets, setSets] = useState<SetlistGroup[]>(DEFAULT_SETS);
-  const [activeSetId, setActiveSetId] = useState<string>('set-1');
   const [songs, setSongs] = useState<Song[]>([]);
+
+  // Total Commander Dual-Pane State
+  const [leftSourceId, setLeftSourceId] = useState<string>('set-1');
+  const [rightSourceId, setRightSourceId] = useState<string>('library');
+  const [activePane, setActivePane] = useState<PaneSide>('right');
+
+  // Per-pane selection (song.id for Library, originalIndex for Set)
+  const [leftSelection, setLeftSelection] = useState<Set<number>>(() => new Set());
+  const [rightSelection, setRightSelection] = useState<Set<number>>(() => new Set());
+  const lastClickedVisibleIdxRef = useRef<{ left: number | null; right: number | null }>({
+    left: null,
+    right: null,
+  });
+
+  // Per-pane filter state controlled via unified top CommanderToolbar
+  const [leftFilter, setLeftFilter] = useState<SongFilterState>(DEFAULT_SONG_FILTER);
+  const [rightFilter, setRightFilter] = useState<SongFilterState>(DEFAULT_SONG_FILTER);
 
   // Sync state
   const [isSyncing, setIsSyncing] = useState<boolean>(false);
@@ -84,15 +185,83 @@ function SetlistStudio() {
     return map;
   }, [songs]);
 
-  // Current active set
-  const activeSet = useMemo(() => {
-    return sets.find((s) => s.id === activeSetId) || sets[0] || DEFAULT_SETS[0];
-  }, [sets, activeSetId]);
+  // Map of all song IDs assigned across all sets (songId -> first set name)
+  const assignedSongIds = useMemo(() => {
+    const map = new Map<number, string>();
+    for (const set of sets) {
+      for (const id of set.songIds) {
+        if (!map.has(id)) {
+          map.set(id, set.name);
+        }
+      }
+    }
+    return map;
+  }, [sets]);
+
+  // Distinct singers and category options for the shared Filter panel
+  const singers = useMemo(() => extractSingers(songs), [songs]);
+  const categoryOptions = useMemo(() => buildCategoryOptions(songs), [songs]);
 
   // Total songs in active sets
   const totalSetSongs = useMemo(() => {
     return sets.reduce((sum, s) => sum + s.songIds.length, 0);
   }, [sets]);
+
+  // Ensure pane source IDs always stay valid if sets change
+  const resolvedLeftSourceId = useMemo(() => {
+    if (leftSourceId === 'library') return 'library';
+    return sets.some((s) => s.id === leftSourceId) ? leftSourceId : sets[0]?.id || 'library';
+  }, [leftSourceId, sets]);
+
+  const resolvedRightSourceId = useMemo(() => {
+    if (rightSourceId === 'library') return 'library';
+    return sets.some((s) => s.id === rightSourceId) ? rightSourceId : 'library';
+  }, [rightSourceId, sets]);
+
+  // Build pane display data
+  const leftPaneData = useMemo(
+    () =>
+      buildPaneData(
+        resolvedLeftSourceId,
+        leftFilter,
+        songs,
+        sets,
+        songsMap,
+        assignedSongIds
+      ),
+    [resolvedLeftSourceId, leftFilter, songs, sets, songsMap, assignedSongIds]
+  );
+
+  const rightPaneData = useMemo(
+    () =>
+      buildPaneData(
+        resolvedRightSourceId,
+        rightFilter,
+        songs,
+        sets,
+        songsMap,
+        assignedSongIds
+      ),
+    [resolvedRightSourceId, rightFilter, songs, sets, songsMap, assignedSongIds]
+  );
+
+  const activeData = activePane === 'left' ? leftPaneData : rightPaneData;
+  const targetData = activePane === 'left' ? rightPaneData : leftPaneData;
+  const activeSourceId = activePane === 'left' ? resolvedLeftSourceId : resolvedRightSourceId;
+  const targetSourceId = activePane === 'left' ? resolvedRightSourceId : resolvedLeftSourceId;
+  const activeSelection = activePane === 'left' ? leftSelection : rightSelection;
+  const setActiveSelection = activePane === 'left' ? setLeftSelection : setRightSelection;
+  const activeFilter = activePane === 'left' ? leftFilter : rightFilter;
+  const setActiveFilter = activePane === 'left' ? setLeftFilter : setRightFilter;
+
+  // Target set song IDs lookup (for showing "in target set" badge in Library panes)
+  const leftTargetSetSongIds = useMemo(() => {
+    return rightPaneData.setGroup ? new Set(rightPaneData.setGroup.songIds) : undefined;
+  }, [rightPaneData.setGroup]);
+
+  const rightTargetSetSongIds = useMemo(() => {
+    return leftPaneData.setGroup ? new Set(leftPaneData.setGroup.songIds) : undefined;
+  }, [leftPaneData.setGroup]);
 
   // 1. Initial Load from IndexedDB + automatic background refresh from Google Drive when online
   useEffect(() => {
@@ -106,12 +275,10 @@ function SetlistStudio() {
         if (savedSongs && savedSongs.length > 0) {
           const enrichedLocal = enrichSongsWithDatabase(savedSongs, undefined, savedLegend);
           setSongs(enrichedLocal);
-          // Silently fetch fresh Excel/MSS updates from Google Drive in the background
           if (typeof navigator === 'undefined' || navigator.onLine) {
             handleSyncDatabase(true, true);
           }
         } else {
-          // Provide bundled DB immediately while attempting live Google Drive sync
           const bundled = getBundledDatabaseSongs();
           if (bundled.length > 0) {
             setSongs(bundled);
@@ -126,6 +293,7 @@ function SetlistStudio() {
           }
           if (savedProject.sets && savedProject.sets.length > 0) {
             setSets(savedProject.sets);
+            setLeftSourceId(savedProject.sets[0].id);
           }
         }
       } catch (err) {
@@ -195,7 +363,6 @@ function SetlistStudio() {
       }
     } catch (err: any) {
       console.error('Sync failed:', err);
-      // If we already have songs, don't wipe them
       const [localSongs, savedLegend] = await Promise.all([
         storage.getSongs(),
         storage.getSingerLegend(),
@@ -237,7 +404,6 @@ function SetlistStudio() {
         let syncedCount = 0;
         for (const item of pending) {
           try {
-            // Skip legacy standalone PDF-only items that cannot be posted without MSS
             if (item.fileType === 'pdf') {
               await storage.removePendingUpload(item.id);
               continue;
@@ -277,7 +443,23 @@ function SetlistStudio() {
     processQueue();
   }, [isOnline]);
 
-  // Set Operations
+  // Pane Source & Set Tabs Operations
+  const handleChangePaneSource = (side: PaneSide, newSourceId: string) => {
+    if (side === 'left') {
+      setLeftSourceId(newSourceId);
+      setLeftSelection(new Set());
+      lastClickedVisibleIdxRef.current.left = null;
+    } else {
+      setRightSourceId(newSourceId);
+      setRightSelection(new Set());
+      lastClickedVisibleIdxRef.current.right = null;
+    }
+  };
+
+  const handleSelectSetFromTabs = (setId: string) => {
+    handleChangePaneSource(activePane, setId);
+  };
+
   const handleAddSet = () => {
     const dynamicSets = sets.filter((s) => !s.isFixed);
     const newIndex = dynamicSets.length + 1;
@@ -290,22 +472,423 @@ function SetlistStudio() {
     const fixedSets = sets.filter((s) => s.isFixed);
     const updated = [...dynamicSets, newSet, ...fixedSets];
     setSets(updated);
-    setActiveSetId(newSet.id);
+
+    // Open new set in the active pane if it's already showing a set,
+    // or in the opposite pane if active pane is Library (so user can immediately copy from Library!)
+    if (activeSourceId !== 'library') {
+      handleChangePaneSource(activePane, newSet.id);
+    } else if (targetSourceId !== 'library') {
+      handleChangePaneSource(activePane === 'left' ? 'right' : 'left', newSet.id);
+    } else {
+      handleChangePaneSource('left', newSet.id);
+    }
   };
 
   const handleDeleteSet = (id: string) => {
     if (sets.length <= 1) return;
     const updated = sets.filter((s) => s.id !== id);
     setSets(updated);
-    if (activeSetId === id) {
-      setActiveSetId(updated[0].id);
+    const fallbackId = updated[0]?.id || 'library';
+    if (leftSourceId === id) {
+      handleChangePaneSource('left', fallbackId);
+    }
+    if (rightSourceId === id) {
+      handleChangePaneSource('right', fallbackId);
     }
   };
 
-  const handleAddSongToActiveSet = (song: Song) => {
+  // Multi-selection toggle (Click = toggle, Shift+Click = range select)
+  const handleToggleRow = (
+    side: PaneSide,
+    rowKey: number,
+    visibleIndex: number,
+    isShiftKey: boolean
+  ) => {
+    setActivePane(side);
+    const rows = side === 'left' ? leftPaneData.rows : rightPaneData.rows;
+    const setSelection = side === 'left' ? setLeftSelection : setRightSelection;
+    const prevIdx = lastClickedVisibleIdxRef.current[side];
+
+    setSelection((prev) => {
+      const next = new Set(prev);
+      if (isShiftKey && prevIdx !== null && prevIdx >= 0 && prevIdx < rows.length) {
+        const start = Math.min(prevIdx, visibleIndex);
+        const end = Math.max(prevIdx, visibleIndex);
+        for (let i = start; i <= end; i++) {
+          next.add(rows[i].rowKey);
+        }
+      } else {
+        if (next.has(rowKey)) {
+          next.delete(rowKey);
+        } else {
+          next.add(rowKey);
+        }
+      }
+      return next;
+    });
+
+    lastClickedVisibleIdxRef.current[side] = visibleIndex;
+  };
+
+  // Reorder via Drag & Drop inside a Set pane
+  const handlePaneReorder = (side: PaneSide, oldIndex: number, newIndex: number) => {
+    const paneData = side === 'left' ? leftPaneData : rightPaneData;
+    const targetSet = paneData.setGroup;
+    if (!targetSet || paneData.isLibrary || paneData.hasFilter) return;
+
     setSets((prevSets) =>
       prevSets.map((s) => {
-        if (s.id === activeSet.id) {
+        if (s.id !== targetSet.id) return s;
+        const list = [...s.songIds];
+        const [dragged] = list.splice(oldIndex, 1);
+        list.splice(newIndex, 0, dragged);
+        return { ...s, songIds: list };
+      })
+    );
+
+    // Remap selected indices in that pane so selection follows the reordered items
+    const remapSelection = (prev: Set<number>) => {
+      if (prev.size === 0) return prev;
+      const next = new Set<number>();
+      prev.forEach((idx) => {
+        if (idx === oldIndex) {
+          next.add(newIndex);
+        } else if (oldIndex < newIndex && idx > oldIndex && idx <= newIndex) {
+          next.add(idx - 1);
+        } else if (oldIndex > newIndex && idx >= newIndex && idx < oldIndex) {
+          next.add(idx + 1);
+        } else {
+          next.add(idx);
+        }
+      });
+      return next;
+    };
+
+    if (side === 'left') {
+      setLeftSelection(remapSelection);
+      if (resolvedRightSourceId === targetSet.id) {
+        setRightSelection(remapSelection);
+      }
+    } else {
+      setRightSelection(remapSelection);
+      if (resolvedLeftSourceId === targetSet.id) {
+        setLeftSelection(remapSelection);
+      }
+    }
+  };
+
+  // Determine capabilities for the unified CommanderToolbar
+  const selectedCount = activeSelection.size;
+  const allVisibleSelected =
+    activeData.rows.length > 0 &&
+    activeData.rows.every((row) => activeSelection.has(row.rowKey));
+
+  const sameSourceInBothPanes = activeSourceId === targetSourceId;
+
+  const canCopy =
+    selectedCount > 0 && !targetData.isLibrary && !sameSourceInBothPanes && Boolean(targetData.setGroup);
+
+  const copyDisabledReason =
+    selectedCount === 0
+      ? 'Nejprve kliknutím označte jednu nebo více skladeb v aktivním okně'
+      : targetData.isLibrary
+      ? 'Cílový panel je Knihovna – pro kopírování vyberte v druhém okně setlist'
+      : sameSourceInBothPanes
+      ? 'Oba panely zobrazují stejný setlist'
+      : undefined;
+
+  const canMove =
+    selectedCount > 0 &&
+    !activeData.isLibrary &&
+    !targetData.isLibrary &&
+    !sameSourceInBothPanes &&
+    Boolean(activeData.setGroup) &&
+    Boolean(targetData.setGroup);
+
+  const moveDisabledReason =
+    selectedCount === 0
+      ? 'Nejprve označte skladby v aktivním setlistu'
+      : activeData.isLibrary
+      ? 'Z Knihovny nelze přesouvat – použijte Kopírovat'
+      : targetData.isLibrary
+      ? 'Do Knihovny nelze přesouvat – v druhém okně zvolte cílový setlist'
+      : sameSourceInBothPanes
+      ? 'Oba panely zobrazují stejný setlist'
+      : undefined;
+
+  const canReorderActiveSet = !activeData.isLibrary && !activeData.hasFilter && Boolean(activeData.setGroup);
+
+  const canMoveUp = useMemo(() => {
+    if (!canReorderActiveSet || selectedCount === 0 || !activeData.setGroup) return false;
+    const n = activeData.setGroup.songIds.length;
+    for (let i = 1; i < n; i++) {
+      if (activeSelection.has(i) && !activeSelection.has(i - 1)) return true;
+    }
+    return false;
+  }, [canReorderActiveSet, selectedCount, activeData.setGroup, activeSelection]);
+
+  const canMoveDown = useMemo(() => {
+    if (!canReorderActiveSet || selectedCount === 0 || !activeData.setGroup) return false;
+    const n = activeData.setGroup.songIds.length;
+    for (let i = 0; i < n - 1; i++) {
+      if (activeSelection.has(i) && !activeSelection.has(i + 1)) return true;
+    }
+    return false;
+  }, [canReorderActiveSet, selectedCount, activeData.setGroup, activeSelection]);
+
+  const reorderDisabledReason = activeData.isLibrary
+    ? 'Pořadí lze měnit pouze v setlistech'
+    : activeData.hasFilter
+    ? 'Pro změnu pořadí nejprve zrušte filtr/řazení v aktivním okně'
+    : selectedCount === 0
+    ? 'Označte skladby pro posun nahoru nebo dolů'
+    : undefined;
+
+  const canRemove = selectedCount > 0 && !activeData.isLibrary && Boolean(activeData.setGroup);
+
+  // Selected song for Detail (?) & Manual Pairing
+  const selectedSingleSong = useMemo<Song | null>(() => {
+    if (selectedCount !== 1) return null;
+    const onlyKey = Array.from(activeSelection)[0];
+    if (activeData.isLibrary) {
+      return songsMap.get(onlyKey) || null;
+    }
+    const songId = activeData.setGroup?.songIds[onlyKey];
+    if (songId === undefined) return null;
+    return (
+      songsMap.get(songId) || {
+        id: songId,
+        pdf_title: songId < 0 ? 'Neznámá skladba' : `Skladba #${songId}`,
+        mss_title: songId < 0 ? 'Neznámá skladba' : `Skladba #${songId}`,
+        textColor: '#000000',
+        bgColor: '#ffffff',
+        isUnmatched: songId < 0,
+      }
+    );
+  }, [selectedCount, activeSelection, activeData.isLibrary, activeData.setGroup, songsMap]);
+
+  const unmatchedSelectedSong =
+    selectedSingleSong && (selectedSingleSong.isUnmatched || selectedSingleSong.id < 0)
+      ? selectedSingleSong
+      : null;
+
+  // Commander Action Handlers
+  const handleCopySelected = useCallback(() => {
+    if (!canCopy || !targetData.setGroup) return;
+    const targetSet = targetData.setGroup;
+
+    let songIdsToCopy: number[] = [];
+    if (activeData.isLibrary) {
+      // Preserve current visible order when copying from Library
+      const visibleSelected = activeData.rows
+        .filter((r) => activeSelection.has(r.rowKey))
+        .map((r) => r.songId);
+      const visibleSet = new Set(visibleSelected);
+      const hiddenSelected = Array.from(activeSelection).filter((id) => !visibleSet.has(id));
+      songIdsToCopy = [...visibleSelected, ...hiddenSelected];
+    } else if (activeData.setGroup) {
+      const sortedIndices = Array.from(activeSelection).sort((a, b) => a - b);
+      songIdsToCopy = sortedIndices
+        .map((idx) => activeData.setGroup!.songIds[idx])
+        .filter((id): id is number => id !== undefined);
+    }
+
+    if (songIdsToCopy.length === 0) return;
+
+    const existing = new Set(targetSet.songIds);
+    const toAppend: number[] = [];
+    let skipped = 0;
+
+    for (const id of songIdsToCopy) {
+      if (!existing.has(id)) {
+        existing.add(id);
+        toAppend.push(id);
+      } else {
+        skipped++;
+      }
+    }
+
+    if (toAppend.length > 0) {
+      setSets((prevSets) =>
+        prevSets.map((s) =>
+          s.id === targetSet.id ? { ...s, songIds: [...s.songIds, ...toAppend] } : s
+        )
+      );
+      setActiveSelection(new Set());
+      if (skipped > 0) {
+        showSuccess(
+          `Zkopírováno ${formatCzechSongCount(toAppend.length)} do „${targetSet.name}“ (${skipped} již v setu).`
+        );
+      } else {
+        showSuccess(
+          `Zkopírováno ${formatCzechSongCount(toAppend.length)} do „${targetSet.name}“.`
+        );
+      }
+    } else {
+      setActiveSelection(new Set());
+      showWarning(`Všechny vybrané skladby už v „${targetSet.name}“ jsou.`);
+    }
+  }, [
+    canCopy,
+    targetData.setGroup,
+    activeData.isLibrary,
+    activeData.rows,
+    activeData.setGroup,
+    activeSelection,
+    setActiveSelection,
+    showSuccess,
+    showWarning,
+  ]);
+
+  const handleMoveSelected = useCallback(() => {
+    if (!canMove || !activeData.setGroup || !targetData.setGroup) return;
+    const sourceSet = activeData.setGroup;
+    const targetSet = targetData.setGroup;
+
+    const indicesToRemove = new Set(activeSelection);
+    const sortedIndices = Array.from(indicesToRemove).sort((a, b) => a - b);
+    const songIdsToMove = sortedIndices
+      .map((idx) => sourceSet.songIds[idx])
+      .filter((id): id is number => id !== undefined);
+
+    if (songIdsToMove.length === 0) return;
+
+    setSets((prevSets) =>
+      prevSets.map((s) => {
+        if (s.id === sourceSet.id) {
+          return {
+            ...s,
+            songIds: s.songIds.filter((_, idx) => !indicesToRemove.has(idx)),
+          };
+        }
+        if (s.id === targetSet.id) {
+          const existing = new Set(s.songIds);
+          const additions = songIdsToMove.filter((id) => {
+            if (existing.has(id)) return false;
+            existing.add(id);
+            return true;
+          });
+          return { ...s, songIds: [...s.songIds, ...additions] };
+        }
+        return s;
+      })
+    );
+
+    setActiveSelection(new Set());
+    showSuccess(
+      `Přesunuto ${formatCzechSongCount(songIdsToMove.length)} z „${sourceSet.name}“ do „${targetSet.name}“.`
+    );
+  }, [canMove, activeData.setGroup, targetData.setGroup, activeSelection, setActiveSelection, showSuccess]);
+
+  const handleMoveSelectedUp = useCallback(() => {
+    if (!canMoveUp || !activeData.setGroup) return;
+    const sourceSet = activeData.setGroup;
+    const list = [...sourceSet.songIds];
+    const nextSel = new Set(activeSelection);
+
+    for (let i = 1; i < list.length; i++) {
+      if (nextSel.has(i) && !nextSel.has(i - 1)) {
+        const temp = list[i];
+        list[i] = list[i - 1];
+        list[i - 1] = temp;
+        nextSel.delete(i);
+        nextSel.add(i - 1);
+      }
+    }
+
+    setSets((prevSets) =>
+      prevSets.map((s) => (s.id === sourceSet.id ? { ...s, songIds: list } : s))
+    );
+    setActiveSelection(nextSel);
+    if (sameSourceInBothPanes) {
+      if (activePane === 'left') setRightSelection(new Set());
+      else setLeftSelection(new Set());
+    }
+  }, [canMoveUp, activeData.setGroup, activeSelection, setActiveSelection, sameSourceInBothPanes, activePane]);
+
+  const handleMoveSelectedDown = useCallback(() => {
+    if (!canMoveDown || !activeData.setGroup) return;
+    const sourceSet = activeData.setGroup;
+    const list = [...sourceSet.songIds];
+    const nextSel = new Set(activeSelection);
+
+    for (let i = list.length - 2; i >= 0; i--) {
+      if (nextSel.has(i) && !nextSel.has(i + 1)) {
+        const temp = list[i];
+        list[i] = list[i + 1];
+        list[i + 1] = temp;
+        nextSel.delete(i);
+        nextSel.add(i + 1);
+      }
+    }
+
+    setSets((prevSets) =>
+      prevSets.map((s) => (s.id === sourceSet.id ? { ...s, songIds: list } : s))
+    );
+    setActiveSelection(nextSel);
+    if (sameSourceInBothPanes) {
+      if (activePane === 'left') setRightSelection(new Set());
+      else setLeftSelection(new Set());
+    }
+  }, [canMoveDown, activeData.setGroup, activeSelection, setActiveSelection, sameSourceInBothPanes, activePane]);
+
+  const handleRemoveSelected = useCallback(() => {
+    if (!canRemove || !activeData.setGroup) return;
+    const sourceSet = activeData.setGroup;
+    const indicesToRemove = new Set(activeSelection);
+    const removedCount = indicesToRemove.size;
+
+    setSets((prevSets) =>
+      prevSets.map((s) =>
+        s.id === sourceSet.id
+          ? { ...s, songIds: s.songIds.filter((_, idx) => !indicesToRemove.has(idx)) }
+          : s
+      )
+    );
+    setActiveSelection(new Set());
+    if (sameSourceInBothPanes) {
+      if (activePane === 'left') setRightSelection(new Set());
+      else setLeftSelection(new Set());
+    }
+    showSuccess(`Odebráno ${formatCzechSongCount(removedCount)} z „${sourceSet.name}“.`);
+  }, [canRemove, activeData.setGroup, activeSelection, setActiveSelection, sameSourceInBothPanes, activePane, showSuccess]);
+
+  const handleToggleSelectAll = useCallback(() => {
+    setActiveSelection(new Set(activeData.rows.map((r) => r.rowKey)));
+  }, [activeData.rows, setActiveSelection]);
+
+  const handleClearSelection = useCallback(() => {
+    setActiveSelection(new Set());
+  }, [setActiveSelection]);
+
+  const handleSwapPanes = useCallback(() => {
+    setLeftSourceId(resolvedRightSourceId);
+    setRightSourceId(resolvedLeftSourceId);
+    setLeftSelection(rightSelection);
+    setRightSelection(leftSelection);
+    setLeftFilter(rightFilter);
+    setRightFilter(leftFilter);
+    lastClickedVisibleIdxRef.current = { left: null, right: null };
+  }, [
+    resolvedLeftSourceId,
+    resolvedRightSourceId,
+    leftSelection,
+    rightSelection,
+    leftFilter,
+    rightFilter,
+  ]);
+
+  // Add single song from SongDetailModal into target (or active) set
+  const detailTargetSet = useMemo(() => {
+    if (targetData.setGroup) return targetData.setGroup;
+    if (activeData.setGroup) return activeData.setGroup;
+    return sets[0] || DEFAULT_SETS[0];
+  }, [targetData.setGroup, activeData.setGroup, sets]);
+
+  const handleAddSongFromDetailModal = (song: Song) => {
+    setSets((prevSets) =>
+      prevSets.map((s) => {
+        if (s.id === detailTargetSet.id) {
           if (s.songIds.includes(song.id)) return s;
           return { ...s, songIds: [...s.songIds, song.id] };
         }
@@ -314,105 +897,75 @@ function SetlistStudio() {
     );
   };
 
-  const handleMoveSongUp = (index: number) => {
-    if (index === 0) return;
-    setSets((prevSets) =>
-      prevSets.map((s) => {
-        if (s.id === activeSet.id) {
-          const list = [...s.songIds];
-          const temp = list[index];
-          list[index] = list[index - 1];
-          list[index - 1] = temp;
-          return { ...s, songIds: list };
+  // Total Commander Keyboard Shortcuts (when no modal is open & focus not in an input)
+  const anyModalOpen =
+    isAdminPanelOpen ||
+    isExportOpen ||
+    isImportModalOpen ||
+    isDisplaySettingsOpen ||
+    pairingSong !== null ||
+    inspectedSong !== null;
+
+  useEffect(() => {
+    if (anyModalOpen) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement | null;
+      const tag = target?.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || target?.isContentEditable) {
+        return;
+      }
+
+      if (e.key === 'Tab' && !e.ctrlKey && !e.altKey && !e.metaKey) {
+        e.preventDefault();
+        setActivePane((prev) => (prev === 'left' ? 'right' : 'left'));
+      } else if (e.key === 'F5') {
+        e.preventDefault();
+        handleCopySelected();
+      } else if (e.key === 'F6') {
+        e.preventDefault();
+        handleMoveSelected();
+      } else if (e.key === 'F8' || e.key === 'Delete') {
+        if (canRemove) {
+          e.preventDefault();
+          handleRemoveSelected();
         }
-        return s;
-      })
-    );
-  };
-
-  const handleMoveSongDown = (index: number) => {
-    if (index >= activeSet.songIds.length - 1) return;
-    setSets((prevSets) =>
-      prevSets.map((s) => {
-        if (s.id === activeSet.id) {
-          const list = [...s.songIds];
-          const temp = list[index];
-          list[index] = list[index + 1];
-          list[index + 1] = temp;
-          return { ...s, songIds: list };
+      } else if (e.key === 'Escape') {
+        if (activeSelection.size > 0) {
+          handleClearSelection();
         }
-        return s;
-      })
-    );
-  };
+      } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'a') {
+        e.preventDefault();
+        handleToggleSelectAll();
+      }
+    };
 
-  const handleRemoveSong = (index: number) => {
-    setSets((prevSets) =>
-      prevSets.map((s) => {
-        if (s.id === activeSet.id) {
-          const list = [...s.songIds];
-          list.splice(index, 1);
-          return { ...s, songIds: list };
-        }
-        return s;
-      })
-    );
-  };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [
+    anyModalOpen,
+    handleCopySelected,
+    handleMoveSelected,
+    handleRemoveSelected,
+    handleClearSelection,
+    handleToggleSelectAll,
+    canRemove,
+    activeSelection.size,
+  ]);
 
-  const handleMoveSongToSet = (fromIndex: number, targetSetId: string) => {
-    const songId = activeSet.songIds[fromIndex];
-    if (songId === undefined) return;
-
-    setSets((prevSets) =>
-      prevSets.map((s) => {
-        if (s.id === activeSet.id) {
-          const list = [...s.songIds];
-          list.splice(fromIndex, 1);
-          return { ...s, songIds: list };
-        }
-        if (s.id === targetSetId) {
-          if (s.songIds.includes(songId)) return s;
-          return { ...s, songIds: [...s.songIds, songId] };
-        }
-        return s;
-      })
-    );
-  };
-
-  const handleReorderSong = (dragIndex: number, hoverIndex: number) => {
-    setSets((prevSets) =>
-      prevSets.map((s) => {
-        if (s.id === activeSet.id) {
-          const list = [...s.songIds];
-          const [dragged] = list.splice(dragIndex, 1);
-          list.splice(hoverIndex, 0, dragged);
-          return { ...s, songIds: list };
-        }
-        return s;
-      })
-    );
-  };
-
-  const handleClearSet = () => {
-    setSets((prevSets) =>
-      prevSets.map((s) => (s.id === activeSet.id ? { ...s, songIds: [] } : s))
-    );
-  };
-
-  // 5. Import Handlers for .mss and .xlsx files
+  // 5. Import Handlers for .mss and .xlsx files (100% preserved)
   const handleApplyImport = async (result: ImportResult) => {
-    // A. Update Sets state
     if (result.sets && result.sets.length > 0) {
       setSets(result.sets);
-      setActiveSetId(result.sets[0].id);
+      setLeftSourceId(result.sets[0].id);
+      setRightSourceId('library');
+      setLeftSelection(new Set());
+      setRightSelection(new Set());
     }
 
-    // B. Update Event Name
     if (result.eventName) {
       setEventName(result.eventName);
     }
 
-    // C. Add or update songs in state & storage (preserving saxophone notes from Excel)
     if (result.newSongs && result.newSongs.length > 0) {
       setSongs((prevSongs) => {
         const songMap = new Map(prevSongs.map((s) => [s.id, s]));
@@ -425,7 +978,6 @@ function SetlistStudio() {
       });
     }
 
-    // D. User Feedback Toast
     if (result.unmatchedCount > 0) {
       showWarning(
         `Importováno ${result.sets.length} setů. ${result.matchedCount} skladeb napárováno, ${result.unmatchedCount} označeno v setu ke kontrole.`,
@@ -444,7 +996,6 @@ function SetlistStudio() {
       const fileName = file.name;
       const lower = fileName.toLowerCase();
 
-      // Ensure library is available
       let currentSongs = songs;
       if (currentSongs.length === 0) {
         const saved = await storage.getSongs();
@@ -477,11 +1028,10 @@ function SetlistStudio() {
     }
   };
 
-  // 6. Manual Song Pairing handler
+  // 6. Manual Song Pairing handler (100% preserved)
   const handlePairSong = (tempId: number, targetMasterId: number) => {
     const targetSong = songs.find((s) => s.id === targetMasterId);
 
-    // Replace tempId with targetMasterId in all sets
     setSets((prevSets) =>
       prevSets.map((s) => ({
         ...s,
@@ -489,7 +1039,6 @@ function SetlistStudio() {
       }))
     );
 
-    // Clean up temporary song from songs state if it was a negative ID
     if (tempId < 0) {
       setSongs((prev) => prev.filter((s) => s.id !== tempId));
     }
@@ -500,7 +1049,7 @@ function SetlistStudio() {
     );
   };
 
-  // Generator & Silent Backend Drive Export Execution with Real-Time Background Progress
+  // 7. Export Generator & Silent Backend Drive Export (100% preserved)
   const handleGenerateAndSave = async () => {
     setIsExporting(true);
     setIsExportOpen(true);
@@ -538,7 +1087,6 @@ function SetlistStudio() {
     const mssFileName = `${safeName}.mss`;
 
     try {
-      // 0. Initialize & Reset progress
       setExportProgress({
         progress: 5,
         stepId: 'prep',
@@ -547,14 +1095,12 @@ function SetlistStudio() {
         logs: [`${formatTime()} Zahájeno generování exportních souborů pro: ${safeName}`],
       });
 
-      // 1. Preparation of sets & songs
       updateStep('prep', 'in_progress', 15, 'Příprava listů a ověřování skladeb...');
       const activeSets = sets.filter((s) => s.songIds.length > 0);
       pushLog(`Načteno ${activeSets.length} listů k exportu (celkem ${totalSetSongs} zařazených skladeb).`);
       await new Promise((r) => setTimeout(r, 220));
       updateStep('prep', 'done', 25, 'Data listů připravena');
 
-      // 2. Generate PDF Stage Sheet
       updateStep('pdf', 'in_progress', 35, 'Generuji barevné PDF pro pódium...');
       pushLog('Vykresluji tiskové stránky s českým fontem (CzechFont) a autentickými barvami...');
       const { blob: pdfBlob, dataUrl } = await generatePdf(eventName, sets, songsMap);
@@ -564,7 +1110,6 @@ function SetlistStudio() {
       updateStep('pdf', 'done', 55, 'PDF arch vygenerován');
       await new Promise((r) => setTimeout(r, 200));
 
-      // 3. Generate MobileSheets XML
       updateStep('mss', 'in_progress', 65, 'Sestavuji MobileSheets XML strukturu...');
       pushLog('Generuji uzly <Setlist> a <Song> pro aplikaci MobileSheets...');
       const mssXml = generateMssXml(eventName, sets, songsMap);
@@ -574,12 +1119,10 @@ function SetlistStudio() {
       updateStep('mss', 'done', 75, 'MobileSheets XML hotovo');
       await new Promise((r) => setTimeout(r, 200));
 
-      // 4. Google Drive connection & upload
       if (isOnline) {
         updateStep('drive_auth', 'in_progress', 82, 'Připojuji se ke Google Disku...');
         pushLog('Ověřuji spojení se službou Google Drive API přes backend...');
 
-        // Convert PDF blob to base64
         const reader = new FileReader();
         const base64Promise = new Promise<string>((resolve) => {
           reader.onloadend = () => resolve(reader.result as string);
@@ -645,7 +1188,7 @@ function SetlistStudio() {
     }
   };
 
-  // Quick downloads
+  // Quick downloads (100% preserved)
   const handleQuickDownloadPdf = async () => {
     const { blob } = await generatePdf(eventName, sets, songsMap);
     const safeName = eventName.trim() || 'Setlist';
@@ -659,8 +1202,8 @@ function SetlistStudio() {
   };
 
   return (
-    <div className="min-h-screen bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 flex flex-col font-sans selection:bg-indigo-500/30 selection:text-indigo-900 dark:selection:text-indigo-200 transition-colors">
-      {/* 1. Header with Event Name, Role badge, and Export buttons */}
+    <div className="tc-app-shell bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 flex flex-col font-sans selection:bg-indigo-500/30 selection:text-indigo-900 dark:selection:text-indigo-200 transition-colors">
+      {/* Row 1: Compact Header (Logo + Setlist Name + Combined Import/Export + Settings + Logout) */}
       <Header
         eventName={eventName}
         onEventNameChange={setEventName}
@@ -677,49 +1220,120 @@ function SetlistStudio() {
 
       {/* Sync feedback notification banner if any */}
       {syncMessage && (
-        <div className="bg-indigo-100 dark:bg-indigo-900/80 border-b border-indigo-200 dark:border-indigo-700/50 py-1.5 px-4 text-center text-xs text-indigo-800 dark:text-indigo-200 font-semibold animate-fadeIn">
+        <div className="shrink-0 bg-indigo-100 dark:bg-indigo-900/80 border-b border-indigo-200 dark:border-indigo-700/50 py-1 px-4 text-center text-xs text-indigo-800 dark:text-indigo-200 font-semibold animate-fadeIn">
           {syncMessage}
         </div>
       )}
 
-      {/* 2. Sets Selector Tabs: [Set 1], [Set 2], [+ Přidat set], [Lidovky], [Zbytek] */}
+      {/* Row 2: Horizontally Scrollable Single-Line Setlist Tabs */}
       <SetTabs
         sets={sets}
-        activeSetId={activeSet.id}
-        onSelectSet={setActiveSetId}
+        leftSourceId={resolvedLeftSourceId}
+        rightSourceId={resolvedRightSourceId}
+        activePane={activePane}
+        onSelectSet={handleSelectSetFromTabs}
         onAddSet={handleAddSet}
         onDeleteSet={handleDeleteSet}
       />
 
-      {/* 3. Main Two-Column Layout */}
-      <main className="flex-1 max-w-7xl w-full mx-auto p-3 sm:p-4 grid grid-cols-1 lg:grid-cols-12 gap-3.5 sm:gap-4 overflow-hidden">
-        {/* LEVÝ SLOUPEC: Aktivní Set */}
-        <section className="lg:col-span-6 flex flex-col h-[calc(100vh-8rem)] min-h-[28rem]">
-          <ActiveSetColumn
-            activeSet={activeSet}
-            songsMap={songsMap}
-            allSets={sets}
-            onMoveSongUp={handleMoveSongUp}
-            onMoveSongDown={handleMoveSongDown}
-            onRemoveSong={handleRemoveSong}
-            onMoveSongToSet={handleMoveSongToSet}
-            onClearSet={handleClearSet}
-            onReorderSong={handleReorderSong}
-            onOpenManualPair={setPairingSong}
-          />
-        </section>
+      {/* Row 3: Unified Total Commander Action, Search & Filter Bar (for Active Pane) */}
+      <CommanderToolbar
+        activePane={activePane}
+        activeSourceLabel={activeData.sourceLabel}
+        targetSourceLabel={targetData.sourceLabel}
+        isActiveLibrary={activeData.isLibrary}
+        selectedCount={selectedCount}
+        visibleCount={activeData.rows.length}
+        allVisibleSelected={allVisibleSelected}
+        canCopy={canCopy}
+        copyDisabledReason={copyDisabledReason}
+        canMove={canMove}
+        moveDisabledReason={moveDisabledReason}
+        canMoveUp={canMoveUp}
+        canMoveDown={canMoveDown}
+        reorderDisabledReason={reorderDisabledReason}
+        canRemove={canRemove}
+        canInspect={selectedSingleSong !== null}
+        unmatchedSelectedSong={unmatchedSelectedSong}
+        onCopy={handleCopySelected}
+        onMove={handleMoveSelected}
+        onMoveUp={handleMoveSelectedUp}
+        onMoveDown={handleMoveSelectedDown}
+        onRemove={handleRemoveSelected}
+        onToggleSelectAll={handleToggleSelectAll}
+        onClearSelection={handleClearSelection}
+        onInspectSelected={() => {
+          if (selectedSingleSong) setInspectedSong(selectedSingleSong);
+        }}
+        onPairSelected={(song) => setPairingSong(song)}
+        onSwapPanes={handleSwapPanes}
+        filter={activeFilter}
+        onFilterChange={setActiveFilter}
+        onResetFilters={() =>
+          setActiveFilter((prev) => ({
+            ...DEFAULT_SONG_FILTER,
+            searchQuery: prev.searchQuery,
+          }))
+        }
+        categoryOptions={categoryOptions}
+        singers={singers}
+      />
 
-        {/* PRAVÝ SLOUPEC: Knihovna skladeb */}
-        <section className="lg:col-span-6 flex flex-col h-[calc(100vh-8rem)] min-h-[28rem]">
-          <LibraryColumn
-            songs={songs}
-            activeSet={activeSet}
+      {/* Main Dual-Pane Total Commander Workspace (side-by-side on Desktop & Tablet Landscape) */}
+      <main className="tc-main-area flex-1 min-h-0 max-w-[1600px] w-full mx-auto p-2 sm:p-3">
+        <div className="tc-panes-grid">
+          {/* LEFT COMMANDER PANE */}
+          <CommanderPane
+            side="left"
+            isActive={activePane === 'left'}
+            sourceId={resolvedLeftSourceId}
             allSets={sets}
-            onAddSongToActiveSet={handleAddSongToActiveSet}
-            onInspectSong={setInspectedSong}
+            totalLibraryCount={songs.length}
+            totalSourceCount={leftPaneData.totalCount}
+            rows={leftPaneData.rows}
+            selectedKeys={leftSelection}
+            hasFilter={leftPaneData.hasFilter}
+            canDragReorder={!leftPaneData.isLibrary && !leftPaneData.hasFilter}
+            targetSetSongIds={leftTargetSetSongIds}
+            targetSetName={rightPaneData.setGroup?.name}
+            assignedSongIds={assignedSongIds}
+            onActivate={() => setActivePane('left')}
+            onChangeSource={(id) => handleChangePaneSource('left', id)}
+            onToggleRow={(rowKey, visibleIndex, isShiftKey) =>
+              handleToggleRow('left', rowKey, visibleIndex, isShiftKey)
+            }
+            onReorderSong={(oldIdx, newIdx) => handlePaneReorder('left', oldIdx, newIdx)}
+            onOpenManualPair={setPairingSong}
+            onClearFilter={() => setLeftFilter(DEFAULT_SONG_FILTER)}
             onSyncDatabase={() => handleSyncDatabase(true)}
           />
-        </section>
+
+          {/* RIGHT COMMANDER PANE */}
+          <CommanderPane
+            side="right"
+            isActive={activePane === 'right'}
+            sourceId={resolvedRightSourceId}
+            allSets={sets}
+            totalLibraryCount={songs.length}
+            totalSourceCount={rightPaneData.totalCount}
+            rows={rightPaneData.rows}
+            selectedKeys={rightSelection}
+            hasFilter={rightPaneData.hasFilter}
+            canDragReorder={!rightPaneData.isLibrary && !rightPaneData.hasFilter}
+            targetSetSongIds={rightTargetSetSongIds}
+            targetSetName={leftPaneData.setGroup?.name}
+            assignedSongIds={assignedSongIds}
+            onActivate={() => setActivePane('right')}
+            onChangeSource={(id) => handleChangePaneSource('right', id)}
+            onToggleRow={(rowKey, visibleIndex, isShiftKey) =>
+              handleToggleRow('right', rowKey, visibleIndex, isShiftKey)
+            }
+            onReorderSong={(oldIdx, newIdx) => handlePaneReorder('right', oldIdx, newIdx)}
+            onOpenManualPair={setPairingSong}
+            onClearFilter={() => setRightFilter(DEFAULT_SONG_FILTER)}
+            onSyncDatabase={() => handleSyncDatabase(true)}
+          />
+        </div>
       </main>
 
       {/* Offline Status Badge */}
@@ -782,10 +1396,10 @@ function SetlistStudio() {
       {/* Song Detail (?) Modal */}
       <SongDetailModal
         song={inspectedSong}
-        activeSetName={activeSet.name}
-        isInActiveSet={inspectedSong ? activeSet.songIds.includes(inspectedSong.id) : false}
+        activeSetName={detailTargetSet.name}
+        isInActiveSet={inspectedSong ? detailTargetSet.songIds.includes(inspectedSong.id) : false}
         onClose={() => setInspectedSong(null)}
-        onAddSongToActiveSet={handleAddSongToActiveSet}
+        onAddSongToActiveSet={handleAddSongFromDetailModal}
       />
     </div>
   );
@@ -798,7 +1412,7 @@ export default function App() {
     return (
       <div className="min-h-screen bg-slate-50 dark:bg-slate-950 flex items-center justify-center text-slate-600 dark:text-slate-400 text-xs">
         <span className="w-5 h-5 rounded-full border-2 border-indigo-500 border-t-transparent animate-spin mr-2" />
-        <span>Načítám Setlist Studio...</span>
+        Načítám zabezpečení aplikace...
       </div>
     );
   }
