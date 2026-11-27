@@ -233,7 +233,27 @@ async function getServiceAccountAccessToken(): Promise<string> {
 }
 
 /**
- * Searches files on Google Drive using Service Account token
+ * Formats Google Drive API HTTP error payload into a readable Czech message.
+ */
+async function buildDriveApiError(res: Response): Promise<Error> {
+  const errText = await res.text();
+  let cleanMsg = errText;
+  try {
+    const errObj = JSON.parse(errText);
+    if (errObj.error?.message?.includes('Google Drive API has not been used')) {
+      const link = errObj.error.message.match(/https:\/\/[^\s]+/)?.[0] || 'https://console.cloud.google.com';
+      cleanMsg = `V Google Cloud projektu není aktivováno Google Drive API. Povolte ho kliknutím na: ${link}`;
+    } else if (errObj.error?.message) {
+      cleanMsg = errObj.error.message;
+    }
+  } catch {
+    // ignore non-JSON error body
+  }
+  return new Error(`Google Drive API (${res.status}): ${cleanMsg}`);
+}
+
+/**
+ * Searches files on Google Drive using Service Account / OAuth2 token
  */
 async function searchDrive(query: string, token: string): Promise<any[]> {
   const url = new URL('https://www.googleapis.com/drive/v3/files');
@@ -248,24 +268,58 @@ async function searchDrive(query: string, token: string): Promise<any[]> {
   });
 
   if (!res.ok) {
-    const errText = await res.text();
-    let cleanMsg = errText;
-    try {
-      const errObj = JSON.parse(errText);
-      if (errObj.error?.message?.includes('Google Drive API has not been used')) {
-        const link = errObj.error.message.match(/https:\/\/[^\s]+/)?.[0] || 'https://console.cloud.google.com';
-        cleanMsg = `V Google Cloud projektu není aktivováno Google Drive API. Povolte ho kliknutím na: ${link}`;
-      } else if (errObj.error?.message) {
-        cleanMsg = errObj.error.message;
-      }
-    } catch (e) {
-      // ignore
-    }
-    throw new Error(`Google Drive API (${res.status}): ${cleanMsg}`);
+    throw await buildDriveApiError(res);
   }
 
   const data = await res.json();
   return data.files || [];
+}
+
+/**
+ * Normalizes a Drive file name for case- and Unicode-normalization-insensitive comparisons.
+ */
+export function normalizeDriveFileName(name: string): string {
+  return name.trim().normalize('NFC').toLocaleLowerCase('cs-CZ');
+}
+
+/**
+ * Lists all non-trashed files inside a Google Drive folder (paginated up to 10 pages).
+ */
+async function listFilesInFolder(folderId: string, token: string): Promise<any[]> {
+  const files: any[] = [];
+  let pageToken: string | undefined;
+
+  for (let page = 0; page < 10; page++) {
+    const url = new URL('https://www.googleapis.com/drive/v3/files');
+    url.searchParams.set('q', `'${folderId}' in parents and trashed = false`);
+    url.searchParams.set('fields', 'nextPageToken,files(id,name,mimeType,size,modifiedTime)');
+    url.searchParams.set('pageSize', '1000');
+    url.searchParams.set('supportsAllDrives', 'true');
+    url.searchParams.set('includeItemsFromAllDrives', 'true');
+    if (pageToken) {
+      url.searchParams.set('pageToken', pageToken);
+    }
+
+    const res = await fetch(url.toString(), {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+
+    if (!res.ok) {
+      throw await buildDriveApiError(res);
+    }
+
+    const data = await res.json();
+    if (Array.isArray(data.files)) {
+      files.push(...data.files);
+    }
+
+    pageToken = typeof data.nextPageToken === 'string' && data.nextPageToken ? data.nextPageToken : undefined;
+    if (!pageToken) {
+      break;
+    }
+  }
+
+  return files;
 }
 
 /**
@@ -972,21 +1026,33 @@ export async function syncMasterSongsFromDrive(forceRefresh = false): Promise<{
   }
 }
 
+export interface ExportDriveOptions {
+  allowOverwrite?: boolean;
+  role?: 'admin' | 'user';
+}
+
 /**
  * Uploads an exported MSS XML string (and optional PDF) to the configured Google Drive Export folder
  */
 export async function exportToGoogleDrive(
   fileName: string,
   mssXml: string,
-  pdfBase64?: string
+  pdfBase64?: string,
+  options?: ExportDriveOptions
 ): Promise<{
   success: boolean;
   mssFileId?: string;
   pdfFileId?: string;
   fileName: string;
   folderId?: string;
+  code?: 'FILE_ALREADY_EXISTS';
+  statusCode?: number;
+  existingFiles?: string[];
+  error?: string;
   message?: string;
 }> {
+  const allowOverwrite = options?.allowOverwrite === true;
+  const effectiveRole = options?.role || (allowOverwrite ? 'admin' : 'user');
   const auth = getGoogleAuthClient();
   const { exportFolderId } = getActiveFolderIds();
 
@@ -1005,7 +1071,7 @@ export async function exportToGoogleDrive(
   }
 
   try {
-    addLog('info', 'EXPORT_START', `Ukládám soubor ${mssTargetName} do exportní složky na Google Disk...`);
+    addLog('info', 'EXPORT_START', `Ukládám soubor ${mssTargetName} do exportní složky na Google Disk (role: ${effectiveRole})...`);
     const token = await getServiceAccountAccessToken();
 
     // 1. Resolve target folder
@@ -1022,9 +1088,43 @@ export async function exportToGoogleDrive(
       throw new Error('Exportní složka není na Google Disku specifikována (nastavte DRIVE_EXPORT_FOLDER_ID v Nastavení nebo .env).');
     }
 
-    // 2. Check if file with same name already exists in target folder
-    const existing = await searchDrive(`'${targetFolderId}' in parents and name = '${mssTargetName.replace(/'/g, "\\'")}' and trashed = false`, token);
-    const existingMssId = existing.length > 0 ? existing[0].id : null;
+    // 2. Check existing files in target folder (case- & Unicode-normalization-insensitive)
+    const folderFiles = await listFilesInFolder(targetFolderId, token);
+    const normalizedMssTarget = normalizeDriveFileName(mssTargetName);
+    const normalizedPdfTarget = normalizeDriveFileName(pdfTargetName);
+
+    const existingMss = folderFiles.find(
+      (f) => normalizeDriveFileName(f.name || '') === normalizedMssTarget
+    );
+    const existingPdf = pdfBase64
+      ? folderFiles.find((f) => normalizeDriveFileName(f.name || '') === normalizedPdfTarget)
+      : undefined;
+
+    const existingMatches: string[] = [];
+    if (existingMss?.name) existingMatches.push(existingMss.name);
+    if (existingPdf?.name) existingMatches.push(existingPdf.name);
+
+    // Atomic conflict check BEFORE uploading either .mss or .pdf
+    if (!allowOverwrite && existingMatches.length > 0) {
+      const conflictMsg = `Setlist „${safeFileName}“ už na Google Disku existuje (${existingMatches.join(', ')}). S vaším PINem nelze existující soubory přepisovat – změňte prosím název setlistu a zkuste export znovu.`;
+      addLog(
+        'warning',
+        'EXPORT_OVERWRITE_BLOCKED',
+        `Blokován pokus o přepis (${effectiveRole}): ${existingMatches.join(', ')} ve složce ${targetFolderId}.`
+      );
+      return {
+        success: false,
+        code: 'FILE_ALREADY_EXISTS',
+        statusCode: 409,
+        fileName: mssTargetName,
+        folderId: targetFolderId,
+        existingFiles: existingMatches,
+        error: conflictMsg,
+        message: conflictMsg,
+      };
+    }
+
+    const existingMssId = allowOverwrite && existingMss?.id ? existingMss.id : null;
 
     // 3. Upload or update MSS XML file
     const mssBoundary = '-------MssBoundary' + Math.random().toString(36).substring(2);
@@ -1063,7 +1163,14 @@ export async function exportToGoogleDrive(
     // 4. If PDF Base64 is also supplied, upload PDF file too
     if (pdfBase64) {
       try {
-        const pdfUpload = await uploadPdfToDriveFolder(targetFolderId, pdfTargetName, pdfBase64, token);
+        const pdfUpload = await uploadPdfToDriveFolder(
+          targetFolderId,
+          pdfTargetName,
+          pdfBase64,
+          token,
+          existingPdf?.id || null,
+          allowOverwrite
+        );
         pdfFileId = pdfUpload.pdfFileId;
       } catch (pdfErr) {
         console.warn('PDF upload warning:', pdfErr);
@@ -1095,17 +1202,31 @@ async function uploadPdfToDriveFolder(
   targetFolderId: string,
   pdfTargetName: string,
   pdfBase64: string,
-  token: string
+  token: string,
+  existingFileId?: string | null,
+  allowOverwrite = true
 ): Promise<{ pdfFileId?: string; updatedExisting: boolean; statusCode: number; errorText?: string }> {
-  const escapedName = pdfTargetName.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
-  const existingPdf = await searchDrive(
-    `'${targetFolderId}' in parents and name = '${escapedName}' and trashed = false`,
-    token
-  );
-  const existingPdfId = existingPdf.length > 0 ? existingPdf[0].id : null;
+  let resolvedExistingId: string | null;
+  if (existingFileId === undefined) {
+    const folderFiles = await listFilesInFolder(targetFolderId, token);
+    const normalizedTarget = normalizeDriveFileName(pdfTargetName);
+    const match = folderFiles.find((f) => normalizeDriveFileName(f.name || '') === normalizedTarget);
+    resolvedExistingId = match?.id || null;
+  } else {
+    resolvedExistingId = existingFileId;
+  }
 
+  if (!allowOverwrite && resolvedExistingId) {
+    return {
+      updatedExisting: true,
+      statusCode: 409,
+      errorText: 'FILE_ALREADY_EXISTS',
+    };
+  }
+
+  const shouldPatch = Boolean(allowOverwrite && resolvedExistingId);
   const pdfBuffer = Buffer.from(pdfBase64.replace(/^data:application\/pdf;base64,/, ''), 'base64');
-  const pdfMetadata = existingPdfId
+  const pdfMetadata = shouldPatch
     ? { name: pdfTargetName }
     : { name: pdfTargetName, parents: [targetFolderId] };
 
@@ -1116,12 +1237,12 @@ async function uploadPdfToDriveFolder(
   const closePart = Buffer.from(`\r\n--${pdfBoundary}--`);
   const multipartPdf = Buffer.concat([metaPart, pdfBuffer, closePart]);
 
-  const pdfEndpoint = existingPdfId
-    ? `https://www.googleapis.com/upload/drive/v3/files/${existingPdfId}?uploadType=multipart&supportsAllDrives=true`
+  const pdfEndpoint = shouldPatch
+    ? `https://www.googleapis.com/upload/drive/v3/files/${resolvedExistingId}?uploadType=multipart&supportsAllDrives=true`
     : 'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&supportsAllDrives=true';
 
   const pdfRes = await fetch(pdfEndpoint, {
-    method: existingPdfId ? 'PATCH' : 'POST',
+    method: shouldPatch ? 'PATCH' : 'POST',
     headers: {
       Authorization: `Bearer ${token}`,
       'Content-Type': `multipart/related; boundary=${pdfBoundary}`,
@@ -1131,7 +1252,7 @@ async function uploadPdfToDriveFolder(
 
   if (!pdfRes.ok) {
     return {
-      updatedExisting: Boolean(existingPdfId),
+      updatedExisting: shouldPatch,
       statusCode: pdfRes.status,
       errorText: await pdfRes.text(),
     };
@@ -1140,7 +1261,7 @@ async function uploadPdfToDriveFolder(
   const pdfJson = await pdfRes.json();
   return {
     pdfFileId: pdfJson.id,
-    updatedExisting: Boolean(existingPdfId),
+    updatedExisting: shouldPatch,
     statusCode: pdfRes.status,
   };
 }
@@ -1151,15 +1272,22 @@ async function uploadPdfToDriveFolder(
  */
 export async function uploadPdfOnlyToGoogleDrive(
   fileName: string,
-  pdfBase64: string
+  pdfBase64: string,
+  options?: ExportDriveOptions
 ): Promise<{
   success: boolean;
   pdfFileId?: string;
   fileName: string;
   folderId?: string;
   updatedExisting?: boolean;
+  code?: 'FILE_ALREADY_EXISTS';
+  statusCode?: number;
+  existingFiles?: string[];
+  error?: string;
   message: string;
 }> {
+  const allowOverwrite = options?.allowOverwrite === true;
+  const effectiveRole = options?.role || (allowOverwrite ? 'admin' : 'user');
   const auth = getGoogleAuthClient();
   const { exportFolderId } = getActiveFolderIds();
   const safeBase = fileName.trim().replace(/\.pdf$/i, '') || 'Seznam pro OSA';
@@ -1188,12 +1316,44 @@ export async function uploadPdfOnlyToGoogleDrive(
     addLog(
       'info',
       'OSA_EXPORT_START',
-      `Ukládám OSA PDF "${pdfTargetName}" do složky Play listy MobileSheets_export...`
+      `Ukládám OSA PDF "${pdfTargetName}" do složky Play listy MobileSheets_export (role: ${effectiveRole})...`
     );
     const token = await getDriveAccessToken();
     const targetFolderId = exportFolderId || PERMANENT_EXPORT_FOLDER_ID;
 
-    const uploadRes = await uploadPdfToDriveFolder(targetFolderId, pdfTargetName, pdfBase64, token);
+    const folderFiles = await listFilesInFolder(targetFolderId, token);
+    const normalizedPdfTarget = normalizeDriveFileName(pdfTargetName);
+    const existingPdf = folderFiles.find(
+      (f) => normalizeDriveFileName(f.name || '') === normalizedPdfTarget
+    );
+
+    if (!allowOverwrite && existingPdf) {
+      const conflictMsg = `Soubor „${existingPdf.name}“ už na Google Disku existuje. S vaším PINem nelze existující soubory přepisovat – změňte prosím název akce a zkuste export znovu.`;
+      addLog(
+        'warning',
+        'OSA_EXPORT_OVERWRITE_BLOCKED',
+        `Blokován pokus o přepis OSA PDF (${effectiveRole}): ${existingPdf.name} ve složce ${targetFolderId}.`
+      );
+      return {
+        success: false,
+        code: 'FILE_ALREADY_EXISTS',
+        statusCode: 409,
+        fileName: pdfTargetName,
+        folderId: targetFolderId,
+        existingFiles: [existingPdf.name],
+        error: conflictMsg,
+        message: conflictMsg,
+      };
+    }
+
+    const uploadRes = await uploadPdfToDriveFolder(
+      targetFolderId,
+      pdfTargetName,
+      pdfBase64,
+      token,
+      existingPdf?.id || null,
+      allowOverwrite
+    );
     if (!uploadRes.pdfFileId) {
       throw new Error(
         `Chyba při nahrávání PDF na Google Disk (${uploadRes.statusCode}): ${uploadRes.errorText || 'Neznámá chyba'}`

@@ -3,6 +3,7 @@ import { UserRole } from '../types';
 
 interface AuthContextType {
   role: UserRole | null;
+  token: string | null;
   isAuthenticated: boolean;
   isLoading: boolean;
   error: string | null;
@@ -15,9 +16,11 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 const STORAGE_KEY_ROLE = 'setlist_studio_role';
 const STORAGE_KEY_AUTH_TIME = 'setlist_studio_auth_time';
+const STORAGE_KEY_TOKEN = 'setlist_studio_token';
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [role, setRole] = useState<UserRole | null>(null);
+  const [token, setToken] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -26,15 +29,19 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     try {
       const savedRole = localStorage.getItem(STORAGE_KEY_ROLE) as UserRole | null;
       const authTime = localStorage.getItem(STORAGE_KEY_AUTH_TIME);
+      const savedToken = localStorage.getItem(STORAGE_KEY_TOKEN);
 
       if (savedRole && (savedRole === 'user' || savedRole === 'admin')) {
         // Optional session expiry (e.g., 30 days)
         const age = Date.now() - (authTime ? parseInt(authTime, 10) : 0);
-        if (age < 30 * 24 * 60 * 60 * 1000) {
+        const hasMissingAdminToken = savedRole === 'admin' && !savedToken;
+        if (age < 30 * 24 * 60 * 60 * 1000 && !hasMissingAdminToken) {
           setRole(savedRole);
+          setToken(savedToken || null);
         } else {
           localStorage.removeItem(STORAGE_KEY_ROLE);
           localStorage.removeItem(STORAGE_KEY_AUTH_TIME);
+          localStorage.removeItem(STORAGE_KEY_TOKEN);
         }
       }
     } catch (e) {
@@ -65,9 +72,16 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       if (res.ok) {
         const data = await res.json();
         const verifiedRole: UserRole = data.role === 'admin' ? 'admin' : 'user';
+        const verifiedToken = typeof data.token === 'string' && data.token ? data.token : null;
         setRole(verifiedRole);
+        setToken(verifiedToken);
         localStorage.setItem(STORAGE_KEY_ROLE, verifiedRole);
         localStorage.setItem(STORAGE_KEY_AUTH_TIME, String(Date.now()));
+        if (verifiedToken) {
+          localStorage.setItem(STORAGE_KEY_TOKEN, verifiedToken);
+        } else {
+          localStorage.removeItem(STORAGE_KEY_TOKEN);
+        }
         return { success: true, role: verifiedRole };
       }
 
@@ -85,15 +99,19 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     // 2. Offline fallback PIN verification (in case dev/offline mode)
     if (cleaned === '251925') {
       setRole('admin');
+      setToken(null);
       localStorage.setItem(STORAGE_KEY_ROLE, 'admin');
       localStorage.setItem(STORAGE_KEY_AUTH_TIME, String(Date.now()));
+      localStorage.removeItem(STORAGE_KEY_TOKEN);
       return { success: true, role: 'admin' };
     }
 
     if (cleaned === '2004') {
       setRole('user');
+      setToken(null);
       localStorage.setItem(STORAGE_KEY_ROLE, 'user');
       localStorage.setItem(STORAGE_KEY_AUTH_TIME, String(Date.now()));
+      localStorage.removeItem(STORAGE_KEY_TOKEN);
       return { success: true, role: 'user' };
     }
 
@@ -104,10 +122,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const logout = () => {
     setRole(null);
+    setToken(null);
     setError(null);
     try {
       localStorage.removeItem(STORAGE_KEY_ROLE);
       localStorage.removeItem(STORAGE_KEY_AUTH_TIME);
+      localStorage.removeItem(STORAGE_KEY_TOKEN);
     } catch (e) {
       // ignore
     }
@@ -119,6 +139,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     <AuthContext.Provider
       value={{
         role,
+        token,
         isAuthenticated: !!role,
         isLoading,
         error,

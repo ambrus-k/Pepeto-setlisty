@@ -1,4 +1,4 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   X,
   ClipboardList,
@@ -11,15 +11,17 @@ import {
 import type { OsaSongRow } from '../services/exportGenerator';
 
 export interface OsaDriveStatus {
-  state: 'idle' | 'generating' | 'uploading' | 'success' | 'offline_queued' | 'error';
+  state: 'idle' | 'generating' | 'uploading' | 'success' | 'offline_queued' | 'error' | 'conflict';
   message?: string;
   updatedExisting?: boolean;
+  existingFiles?: string[];
 }
 
 interface Props {
   isOpen: boolean;
   onClose: () => void;
   onRetryUpload: () => void;
+  onRenameAndRetry?: (newEventName: string) => void;
   eventName: string;
   fileName: string;
   rows: OsaSongRow[];
@@ -30,12 +32,20 @@ export const OsaExportModal: React.FC<Props> = ({
   isOpen,
   onClose,
   onRetryUpload,
+  onRenameAndRetry,
   eventName,
   fileName,
   rows,
   status,
 }) => {
   const isBusy = status.state === 'generating' || status.state === 'uploading';
+  const [renameDraft, setRenameDraft] = useState(eventName);
+
+  useEffect(() => {
+    if (isOpen) {
+      setRenameDraft(eventName);
+    }
+  }, [isOpen, eventName, status.state]);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -50,6 +60,13 @@ export const OsaExportModal: React.FC<Props> = ({
 
   if (!isOpen) return null;
 
+  const trimmedEvent = eventName.trim();
+  const trimmedRenameDraft = renameDraft.trim();
+  const canRenameRetry = Boolean(
+    trimmedRenameDraft &&
+      trimmedRenameDraft.toLocaleLowerCase('cs-CZ') !== trimmedEvent.toLocaleLowerCase('cs-CZ') &&
+      !isBusy
+  );
   const completeCount = rows.filter((r) => r.hasAuthorInfo).length;
   const incompleteRows = rows.filter((r) => !r.hasAuthorInfo);
 
@@ -140,6 +157,56 @@ export const OsaExportModal: React.FC<Props> = ({
                 {status.message ||
                   'Jste v režimu offline. Seznam pro OSA byl zařazen do lokální fronty a automaticky se uloží na Google Disk do složky Play listy MobileSheets_export po obnovení připojení.'}
               </span>
+            </div>
+          )}
+
+          {status.state === 'conflict' && (
+            <div className="p-3.5 rounded-xl bg-amber-50 dark:bg-amber-950/60 border border-amber-300 dark:border-amber-600/70 text-xs text-amber-900 dark:text-amber-100 space-y-2.5 animate-fadeIn">
+              <div className="flex items-start gap-2.5">
+                <AlertTriangle className="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
+                <div className="space-y-1">
+                  <div className="font-bold">
+                    Soubor s tímto názvem už na Google Disku existuje
+                  </div>
+                  <div>
+                    {status.message ||
+                      `Soubor „${fileName}“ už na Google Disku existuje. S vaším PINem nelze existující soubory přepisovat – zadejte jiný název akce a uložte seznam znovu.`}
+                  </div>
+                  {status.existingFiles && status.existingFiles.length > 0 && (
+                    <div className="text-[11px] font-mono text-amber-700 dark:text-amber-300">
+                      Existující soubor: {status.existingFiles.join(', ')}
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {onRenameAndRetry && (
+                <form
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    if (canRenameRetry) {
+                      onRenameAndRetry(trimmedRenameDraft);
+                    }
+                  }}
+                  className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 pt-1"
+                >
+                  <input
+                    type="text"
+                    value={renameDraft}
+                    onChange={(e) => setRenameDraft(e.target.value)}
+                    placeholder="Nový název akce..."
+                    className="flex-1 rounded-lg bg-white dark:bg-slate-900 border border-amber-400 dark:border-amber-600/70 px-3 py-2 text-xs font-semibold text-slate-900 dark:text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-amber-500"
+                  />
+                  <button
+                    type="submit"
+                    disabled={!canRenameRetry}
+                    className="inline-flex items-center justify-center gap-1.5 rounded-lg bg-amber-500 hover:bg-amber-400 disabled:opacity-40 disabled:pointer-events-none text-slate-950 font-bold text-xs px-3.5 py-2 transition cursor-pointer shrink-0"
+                  >
+                    <RefreshCw className="w-3.5 h-3.5" />
+                    <span>Přejmenovat a uložit na Disk</span>
+                  </button>
+                </form>
+              )}
             </div>
           )}
 

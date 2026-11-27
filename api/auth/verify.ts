@@ -11,10 +11,12 @@ type NextApiResponse = {
   setHeader: (name: string, value: string | string[]) => void;
 };
 
+import { createAuthToken, verifyPin } from '../../src/services/authToken.ts';
+
 /**
  * Next.js API Route: /api/auth/verify
  *
- * Verifies PIN input and returns role ('user' or 'admin').
+ * Verifies PIN input and returns role ('user' or 'admin') with a signed session token.
  */
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method !== 'POST') {
@@ -23,24 +25,14 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   }
 
   const { pin } = req.body || {};
-  const cleanedPin = String(pin || '').trim();
+  const role = verifyPin(pin);
 
-  const adminPin = (process.env.ADMIN_PIN || '251925').trim().replace(/^["']|["']$/g, '');
-  const userPin = (process.env.USER_PIN || '2004').trim().replace(/^["']|["']$/g, '');
-
-  if (cleanedPin && (cleanedPin === adminPin || cleanedPin === '251925')) {
+  if (role) {
     return res.status(200).json({
       success: true,
-      role: 'admin',
-      message: 'Ověřeno jako Administrátor.',
-    });
-  }
-
-  if (cleanedPin && (cleanedPin === userPin || cleanedPin === '2004')) {
-    return res.status(200).json({
-      success: true,
-      role: 'user',
-      message: 'Ověřeno jako Muzikant.',
+      role,
+      token: createAuthToken(role),
+      message: role === 'admin' ? 'Ověřeno jako Administrátor.' : 'Ověřeno jako Muzikant.',
     });
   }
 

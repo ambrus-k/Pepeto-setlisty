@@ -167,8 +167,18 @@ function buildPaneData(
 
 function SetlistStudio() {
   const isOnline = useOnlineStatus();
-  const { role, logout } = useAuth();
+  const { role, token, logout } = useAuth();
   const { showSuccess, showError, showWarning } = useToast();
+
+  const buildExportHeaders = useCallback((): Record<string, string> => {
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+    };
+    if (token) {
+      headers.Authorization = `Bearer ${token}`;
+    }
+    return headers;
+  }, [token]);
 
   // Instant synchronous hydration from localStorage mirror (survives Android pull-to-refresh without race condition)
   const initialSyncProjectRef = useRef<EventProject | null | undefined>(undefined);
@@ -296,8 +306,9 @@ function SetlistStudio() {
   const [exportedPdfDataUrl, setExportedPdfDataUrl] = useState<string | null>(null);
   const [exportedMssXml, setExportedMssXml] = useState<string | null>(null);
   const [driveExportStatus, setDriveExportStatus] = useState<{
-    state: 'idle' | 'uploading' | 'success' | 'offline_queued' | 'error';
+    state: 'idle' | 'uploading' | 'success' | 'offline_queued' | 'error' | 'conflict';
     message?: string;
+    existingFiles?: string[];
   }>({ state: 'idle' });
 
   // OSA export state (uploads exclusively to Google Drive export folder)
@@ -603,7 +614,7 @@ function SetlistStudio() {
               const pdfBase64 = await blobToDataUrl(item.blobData);
               const res = await fetch('/api/drive/export', {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: buildExportHeaders(),
                 body: JSON.stringify({
                   fileName: item.fileName,
                   pdfBase64,
@@ -614,6 +625,15 @@ function SetlistStudio() {
               if (res.ok) {
                 await storage.removePendingUpload(item.id);
                 syncedCount++;
+              } else if (res.status === 409) {
+                const errData = await res.json().catch(() => ({}));
+                await storage.removePendingUpload(item.id);
+                showWarning(
+                  errData.message ||
+                    errData.error ||
+                    `Soubor „${item.fileName}“ už na Google Disku existuje a nelze jej přepsat. Změňte název a exportujte znovu.`,
+                  'Existující setlist nelze přepsat'
+                );
               }
               continue;
             }
@@ -623,7 +643,7 @@ function SetlistStudio() {
 
             const res = await fetch('/api/drive/export', {
               method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
+              headers: buildExportHeaders(),
               body: JSON.stringify({
                 fileName: item.fileName,
                 mssXml: mssXml || undefined,
@@ -634,6 +654,15 @@ function SetlistStudio() {
             if (res.ok) {
               await storage.removePendingUpload(item.id);
               syncedCount++;
+            } else if (res.status === 409) {
+              const errData = await res.json().catch(() => ({}));
+              await storage.removePendingUpload(item.id);
+              showWarning(
+                errData.message ||
+                  errData.error ||
+                  `Setlist „${item.fileName}“ už na Google Disku existuje a nelze jej přepsat. Změňte název a exportujte znovu.`,
+                'Existující setlist nelze přepsat'
+              );
             }
           } catch (itemErr) {
             console.warn('Could not sync offline item:', itemErr);
@@ -650,7 +679,7 @@ function SetlistStudio() {
     };
 
     processQueue();
-  }, [isOnline]);
+  }, [isOnline, buildExportHeaders, showWarning]);
 
   // Pane Source & Set Tabs Operations
   const handleChangePaneSource = (side: PaneSide, newSourceId: string) => {
@@ -1337,7 +1366,12 @@ function SetlistStudio() {
   };
 
   // 7. Export Generator & Silent Backend Drive Export (100% preserved)
-  const handleGenerateAndSave = async () => {
+  const handleGenerateAndSave = async (overrideEventName?: string) => {
+    const nextEventName = typeof overrideEventName === 'string' ? overrideEventName : eventName;
+    if (typeof overrideEventName === 'string') {
+      setEventName(overrideEventName);
+    }
+
     setIsExporting(true);
     setIsExportOpen(true);
     setDriveExportStatus({ state: 'uploading' });
@@ -1369,7 +1403,7 @@ function SetlistStudio() {
       }));
     };
 
-    const safeName = eventName.trim() || 'Setlist';
+    const safeName = nextEventName.trim() || 'Setlist';
     const pdfFileName = `${safeName}.pdf`;
     const mssFileName = `${safeName}.mss`;
 
@@ -1390,7 +1424,7 @@ function SetlistStudio() {
 
       updateStep('pdf', 'in_progress', 35, 'Generuji barevné PDF pro pódium...');
       pushLog('Vykresluji tiskové stránky s českým fontem (CzechFont) a autentickými barvami...');
-      const { blob: pdfBlob, dataUrl } = await generatePdf(eventName, sets, songsMap);
+      const { blob: pdfBlob, dataUrl } = await generatePdf(nextEventName, sets, songsMap);
       setExportedPdfBlob(pdfBlob);
       setExportedPdfDataUrl(dataUrl);
       pushLog(`✓ PDF arch vytvořen (${(pdfBlob.size / 1024).toFixed(1)} kB, A4 tabulkový formát).`);
@@ -1399,7 +1433,7 @@ function SetlistStudio() {
 
       updateStep('mss', 'in_progress', 65, 'Sestavuji MobileSheets XML strukturu...');
       pushLog('Generuji uzly <Setlist> a <Song> pro aplikaci MobileSheets...');
-      const mssXml = generateMssXml(eventName, sets, songsMap);
+      const mssXml = generateMssXml(nextEventName, sets, songsMap);
       setExportedMssXml(mssXml);
       const mssSize = new Blob([mssXml]).size;
       pushLog(`✓ XML kód (.mss) zkompilován (${(mssSize / 1024).toFixed(1)} kB, UTF-8).`);
@@ -1423,7 +1457,7 @@ function SetlistStudio() {
 
         const res = await fetch('/api/drive/export', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: buildExportHeaders(),
           body: JSON.stringify({
             fileName: mssFileName,
             mssXml,
@@ -1432,17 +1466,35 @@ function SetlistStudio() {
           }),
         });
 
-        if (res.ok) {
-          const data = await res.json();
+        const data = await res.json().catch(() => ({}));
+        if (res.ok && data.success !== false) {
           pushLog(`✓ Úspěšně nahráno a potvrzeno Google Cloudem (ID souboru: ${data.mssFileId || 'export_ok'}).`);
           updateStep('drive_upload', 'done', 100, 'Uloženo na Google Disk');
           setDriveExportStatus({
             state: 'success',
             message: data.message || `Setlist "${mssFileName}" byl úspěšně uložen do exportní složky na Google Disku!`,
           });
+        } else if (res.status === 409 || data.code === 'FILE_ALREADY_EXISTS') {
+          const conflictMsg =
+            data.error ||
+            data.message ||
+            `Setlist „${safeName}“ už na Google Disku existuje. S vaším PINem nelze existující soubory přepisovat – změňte název setlistu a zkuste export znovu.`;
+          pushLog(`⚠️ ${conflictMsg}`);
+          updateStep(
+            'drive_upload',
+            'error',
+            100,
+            'Setlist s tímto názvem už existuje',
+            'Změňte název setlistu a zkuste export znovu'
+          );
+          setDriveExportStatus({
+            state: 'conflict',
+            message: conflictMsg,
+            existingFiles: Array.isArray(data.existingFiles) ? data.existingFiles : undefined,
+          });
+          return;
         } else {
-          const errorData = await res.json().catch(() => ({}));
-          throw new Error(errorData.error || 'Server vrátil chybu při exportu.');
+          throw new Error(data.error || data.message || 'Server vrátil chybu při exportu.');
         }
       } else {
         updateStep('drive_auth', 'done', 88, 'Offline režim');
@@ -1451,7 +1503,7 @@ function SetlistStudio() {
 
         await storage.addPendingUpload({
           id: `upload-${Date.now()}-bundle`,
-          eventName,
+          eventName: nextEventName,
           fileName: mssFileName,
           fileType: 'bundle',
           blobData: new Blob([mssXml], { type: 'text/xml' }),
@@ -1489,8 +1541,13 @@ function SetlistStudio() {
   };
 
   // 8. OSA Playlist PDF Export (exclusively to Google Drive export folder)
-  const handleGenerateOsaList = async () => {
-    const trimmedEvent = eventName.trim();
+  const handleGenerateOsaList = async (overrideEventName?: string) => {
+    const rawEventName = typeof overrideEventName === 'string' ? overrideEventName : eventName;
+    if (typeof overrideEventName === 'string') {
+      setEventName(overrideEventName);
+    }
+
+    const trimmedEvent = rawEventName.trim();
     if (!trimmedEvent) {
       showWarning(
         'Nejprve vyplňte název akce (pole Setlist v horní liště), aby se soubor pojmenoval „Seznam pro OSA - název akce“.',
@@ -1537,7 +1594,7 @@ function SetlistStudio() {
 
         const res = await fetch('/api/drive/export', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: buildExportHeaders(),
           body: JSON.stringify({
             fileName: fileBaseName,
             pdfBase64,
@@ -1547,6 +1604,19 @@ function SetlistStudio() {
         });
 
         const data = await res.json().catch(() => ({}));
+        if (res.status === 409 || data.code === 'FILE_ALREADY_EXISTS') {
+          const conflictMsg =
+            data.error ||
+            data.message ||
+            `Soubor „${fileName}“ už na Google Disku existuje. Změňte prosím název akce a zkuste export znovu.`;
+          setOsaDriveStatus({
+            state: 'conflict',
+            message: conflictMsg,
+            existingFiles: Array.isArray(data.existingFiles) ? data.existingFiles : undefined,
+          });
+          return;
+        }
+
         if (!res.ok || data.success === false) {
           throw new Error(
             data.error ||
@@ -1597,8 +1667,8 @@ function SetlistStudio() {
         onEventNameChange={setEventName}
         role={role || 'user'}
         onLogout={logout}
-        onGenerateAndSave={handleGenerateAndSave}
-        onGenerateOsaList={handleGenerateOsaList}
+        onGenerateAndSave={() => handleGenerateAndSave()}
+        onGenerateOsaList={() => handleGenerateOsaList()}
         onQuickDownloadPdf={handleQuickDownloadPdf}
         onQuickDownloadMss={handleQuickDownloadMss}
         isExporting={isExporting}
@@ -1759,13 +1829,15 @@ function SetlistStudio() {
         isExporting={isExporting}
         exportProgress={exportProgress}
         driveStatus={driveExportStatus}
+        onRenameAndRetry={(newName) => handleGenerateAndSave(newName)}
       />
 
       {/* OSA Export Modal (Drive-only export) */}
       <OsaExportModal
         isOpen={isOsaExportOpen}
         onClose={() => setIsOsaExportOpen(false)}
-        onRetryUpload={handleGenerateOsaList}
+        onRetryUpload={() => handleGenerateOsaList()}
+        onRenameAndRetry={(newName) => handleGenerateOsaList(newName)}
         eventName={eventName}
         fileName={osaFileName}
         rows={osaExportRows}

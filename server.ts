@@ -12,6 +12,7 @@ import {
   lastParsedXlsx,
   lastParsedLegend,
 } from './src/services/googleDriveServer';
+import { createAuthToken, resolveExportAuth, verifyPin } from './src/services/authToken';
 
 dotenv.config();
 
@@ -26,24 +27,14 @@ app.use(express.urlencoded({ extended: true, limit: '30mb' }));
 // 1. PIN verification endpoint
 app.post('/api/auth/verify', (req: Request, res: Response) => {
   const { pin } = req.body || {};
-  const cleaned = String(pin || '').trim();
+  const role = verifyPin(pin);
 
-  const adminPin = (process.env.ADMIN_PIN || '251925').trim().replace(/^["']|["']$/g, '');
-  const userPin = (process.env.USER_PIN || '2004').trim().replace(/^["']|["']$/g, '');
-
-  if (cleaned && (cleaned === adminPin || cleaned === '251925')) {
+  if (role) {
     return res.json({
       success: true,
-      role: 'admin',
-      message: 'Přihlášen jako Administrátor.',
-    });
-  }
-
-  if (cleaned && (cleaned === userPin || cleaned === '2004')) {
-    return res.json({
-      success: true,
-      role: 'user',
-      message: 'Přihlášen jako Muzikant.',
+      role,
+      token: createAuthToken(role),
+      message: role === 'admin' ? 'Přihlášen jako Administrátor.' : 'Přihlášen jako Muzikant.',
     });
   }
 
@@ -72,6 +63,11 @@ app.get('/api/drive/sync', async (req: Request, res: Response) => {
 app.post('/api/drive/export', async (req: Request, res: Response) => {
   try {
     const { fileName, mssXml, pdfBase64, pdfOnly } = req.body || {};
+    const auth = resolveExportAuth(req.headers as Record<string, string | string[] | undefined>);
+    const exportOptions = {
+      allowOverwrite: auth.allowOverwrite,
+      role: auth.role,
+    };
 
     if (pdfOnly || (!mssXml && pdfBase64)) {
       if (!pdfBase64) {
@@ -80,8 +76,12 @@ app.post('/api/drive/export', async (req: Request, res: Response) => {
           error: 'Chybí povinný obsah souboru PDF (pdfBase64).',
         });
       }
-      const result = await uploadPdfOnlyToGoogleDrive(fileName || 'Seznam pro OSA', pdfBase64);
-      return res.status(result.success ? 200 : 500).json(result);
+      const result = await uploadPdfOnlyToGoogleDrive(
+        fileName || 'Seznam pro OSA',
+        pdfBase64,
+        exportOptions
+      );
+      return res.status(result.statusCode || (result.success ? 200 : 500)).json(result);
     }
 
     if (!mssXml) {
@@ -91,8 +91,13 @@ app.post('/api/drive/export', async (req: Request, res: Response) => {
       });
     }
 
-    const result = await exportToGoogleDrive(fileName || 'Setlist', mssXml, pdfBase64);
-    return res.json(result);
+    const result = await exportToGoogleDrive(
+      fileName || 'Setlist',
+      mssXml,
+      pdfBase64,
+      exportOptions
+    );
+    return res.status(result.statusCode || (result.success ? 200 : 500)).json(result);
   } catch (err: any) {
     return res.status(500).json({
       success: false,

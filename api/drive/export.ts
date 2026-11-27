@@ -11,6 +11,7 @@ type NextApiResponse = {
   setHeader: (name: string, value: string | string[]) => void;
 };
 import { exportToGoogleDrive, uploadPdfOnlyToGoogleDrive } from '../../src/services/googleDriveServer.ts';
+import { resolveExportAuth } from '../../src/services/authToken.ts';
 
 /**
  * Next.js API Route: /api/drive/export
@@ -26,6 +27,11 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
   try {
     const { fileName, mssXml, pdfBase64, pdfOnly } = req.body || {};
+    const auth = resolveExportAuth(req.headers);
+    const exportOptions = {
+      allowOverwrite: auth.allowOverwrite,
+      role: auth.role,
+    };
 
     if (pdfOnly || (!mssXml && pdfBase64)) {
       if (!pdfBase64) {
@@ -34,8 +40,12 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           error: 'Chybí povinný obsah souboru PDF (pdfBase64).',
         });
       }
-      const result = await uploadPdfOnlyToGoogleDrive(fileName || 'Seznam pro OSA', pdfBase64);
-      return res.status(result.success ? 200 : 500).json(result);
+      const result = await uploadPdfOnlyToGoogleDrive(
+        fileName || 'Seznam pro OSA',
+        pdfBase64,
+        exportOptions
+      );
+      return res.status(result.statusCode || (result.success ? 200 : 500)).json(result);
     }
 
     if (!mssXml) {
@@ -45,8 +55,13 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       });
     }
 
-    const result = await exportToGoogleDrive(fileName || 'Setlist', mssXml, pdfBase64);
-    return res.status(result.success ? 200 : 500).json(result);
+    const result = await exportToGoogleDrive(
+      fileName || 'Setlist',
+      mssXml,
+      pdfBase64,
+      exportOptions
+    );
+    return res.status(result.statusCode || (result.success ? 200 : 500)).json(result);
   } catch (error: any) {
     console.error('API /api/drive/export error:', error);
     return res.status(500).json({

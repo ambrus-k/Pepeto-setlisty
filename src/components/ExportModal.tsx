@@ -7,11 +7,13 @@ import {
   CloudUpload,
   CheckCircle2,
   AlertCircle,
+  AlertTriangle,
   Copy,
   Check,
   Eye,
   Terminal,
   Printer,
+  RefreshCw,
 } from 'lucide-react';
 import { downloadFile, cleanTitleForPdf } from '../services/exportGenerator';
 import { SetlistGroup, Song } from '../types';
@@ -43,9 +45,11 @@ interface Props {
   isExporting: boolean;
   exportProgress: ExportProgressState;
   driveStatus: {
-    state: 'idle' | 'uploading' | 'success' | 'offline_queued' | 'error';
+    state: 'idle' | 'uploading' | 'success' | 'offline_queued' | 'error' | 'conflict';
     message?: string;
+    existingFiles?: string[];
   };
+  onRenameAndRetry?: (newEventName: string) => void;
 }
 
 /**
@@ -82,11 +86,19 @@ export const ExportModal: React.FC<Props> = ({
   isExporting,
   exportProgress,
   driveStatus,
+  onRenameAndRetry,
 }) => {
   const [activeTab, setActiveTab] = useState<'progress' | 'preview' | 'xml'>('progress');
   const [copied, setCopied] = useState(false);
   const [selectedPreviewSetIdx, setSelectedPreviewSetIdx] = useState(0);
+  const [renameDraft, setRenameDraft] = useState(eventName);
   const terminalEndRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (isOpen) {
+      setRenameDraft(eventName);
+    }
+  }, [isOpen, eventName, driveStatus.state]);
 
   // Keep terminal scrolled to bottom when new logs appear
   useEffect(() => {
@@ -171,6 +183,12 @@ export const ExportModal: React.FC<Props> = ({
   const safeName = eventName.trim() || 'Setlist';
   const pdfFileName = `${safeName}.pdf`;
   const mssFileName = `${safeName}.mss`;
+  const trimmedRenameDraft = renameDraft.trim();
+  const canRenameRetry = Boolean(
+    trimmedRenameDraft &&
+      trimmedRenameDraft.toLocaleLowerCase('cs-CZ') !== safeName.toLocaleLowerCase('cs-CZ') &&
+      !isExporting
+  );
 
   const handleDownloadPdf = () => {
     if (pdfBlob) {
@@ -239,6 +257,11 @@ export const ExportModal: React.FC<Props> = ({
                       <CheckCircle2 className="w-4 h-4 text-emerald-400" />
                       <span className="text-emerald-300">Generování a upload úspěšně dokončeny!</span>
                     </>
+                  ) : driveStatus.state === 'conflict' ? (
+                    <>
+                      <AlertTriangle className="w-4 h-4 text-amber-400" />
+                      <span className="text-amber-300">Název setlistu už existuje – změňte název</span>
+                    </>
                   ) : driveStatus.state === 'error' ? (
                     <>
                       <AlertCircle className="w-4 h-4 text-rose-400" />
@@ -261,7 +284,9 @@ export const ExportModal: React.FC<Props> = ({
             <div className="w-full h-2.5 rounded-full bg-slate-900 border border-slate-700 overflow-hidden relative">
               <div
                 className={`h-full transition-all duration-300 rounded-full ${
-                  driveStatus.state === 'error'
+                  driveStatus.state === 'conflict'
+                    ? 'bg-amber-500'
+                    : driveStatus.state === 'error'
                     ? 'bg-rose-500'
                     : driveStatus.state === 'success'
                     ? 'bg-gradient-to-r from-indigo-500 via-emerald-400 to-emerald-500'
@@ -283,6 +308,55 @@ export const ExportModal: React.FC<Props> = ({
             <div className="flex items-center gap-2.5 p-3 rounded-xl bg-amber-950/60 border border-amber-700/60 text-xs text-amber-200 animate-fadeIn">
               <AlertCircle className="w-4 h-4 text-amber-400 shrink-0" />
               <span>Jste v režimu offline. Export byl bezpečně uložen do lokální IndexedDB paměti a nahraje se automaticky po obnovení spojení.</span>
+            </div>
+          )}
+          {driveStatus.state === 'conflict' && (
+            <div className="p-3.5 rounded-xl bg-amber-950/70 border border-amber-500/70 text-xs text-amber-100 space-y-2.5 animate-fadeIn">
+              <div className="flex items-start gap-2.5">
+                <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+                <div className="space-y-1">
+                  <div className="font-bold text-amber-200">
+                    Setlist s tímto názvem už na Disku existuje
+                  </div>
+                  <p className="text-amber-100/90 leading-relaxed">
+                    {driveStatus.message ||
+                      `Setlist „${safeName}“ už na Google Disku existuje. S vaším PINem nelze existující soubory přepisovat – zadejte jiný název a uložte export znovu.`}
+                  </p>
+                  {driveStatus.existingFiles && driveStatus.existingFiles.length > 0 && (
+                    <div className="text-[11px] text-amber-300 font-mono">
+                      Existující soubory: {driveStatus.existingFiles.join(', ')}
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {onRenameAndRetry && (
+                <form
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    if (canRenameRetry) {
+                      onRenameAndRetry(trimmedRenameDraft);
+                    }
+                  }}
+                  className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 pt-1"
+                >
+                  <input
+                    type="text"
+                    value={renameDraft}
+                    onChange={(e) => setRenameDraft(e.target.value)}
+                    placeholder="Nový název setlistu (např. s vaším jménem)..."
+                    className="flex-1 rounded-lg bg-slate-900 border border-amber-500/60 px-3 py-2 text-xs font-semibold text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-amber-400"
+                  />
+                  <button
+                    type="submit"
+                    disabled={!canRenameRetry}
+                    className="inline-flex items-center justify-center gap-1.5 rounded-lg bg-amber-500 hover:bg-amber-400 disabled:opacity-40 disabled:pointer-events-none text-slate-950 font-bold text-xs px-3.5 py-2 transition cursor-pointer shrink-0"
+                  >
+                    <RefreshCw className="w-3.5 h-3.5" />
+                    <span>Přejmenovat a uložit na Disk</span>
+                  </button>
+                </form>
+              )}
             </div>
           )}
           {driveStatus.state === 'error' && (
@@ -431,6 +505,7 @@ export const ExportModal: React.FC<Props> = ({
                   ) : (
                     exportProgress.logs.map((log, index) => {
                       const isSuccessLog = log.includes('✓') || log.includes('úspěšně') || log.includes('OK');
+                      const isWarnLog = log.includes('⚠️');
                       const isErrorLog = log.includes('Chyba') || log.includes('Error') || log.includes('selhalo');
 
                       return (
@@ -439,6 +514,8 @@ export const ExportModal: React.FC<Props> = ({
                           className={`flex items-start gap-2 leading-relaxed text-[11px] ${
                             isErrorLog
                               ? 'text-rose-400'
+                              : isWarnLog
+                              ? 'text-amber-300'
                               : isSuccessLog
                               ? 'text-emerald-300'
                               : 'text-slate-300'
