@@ -62,10 +62,11 @@ app.get('/api/drive/sync', async (req: Request, res: Response) => {
 // 3. Google Drive Export endpoint
 app.post('/api/drive/export', async (req: Request, res: Response) => {
   try {
-    const { fileName, mssXml, pdfBase64, pdfOnly, eventName, eventDate } = req.body || {};
+    const { fileName, mssXml, pdfBase64, pdfOnly, eventName, eventDate, confirmOverwrite } = req.body || {};
     const auth = resolveExportAuth(req.headers as Record<string, string | string[] | undefined>);
     const exportOptions = {
       allowOverwrite: auth.allowOverwrite,
+      confirmOverwrite: confirmOverwrite === true,
       role: auth.role,
       eventName: typeof eventName === 'string' ? eventName : undefined,
       eventDate: typeof eventDate === 'string' ? eventDate : undefined,

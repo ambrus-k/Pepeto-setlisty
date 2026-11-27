@@ -1364,6 +1364,7 @@ export async function syncMasterSongsFromDrive(forceRefresh = false): Promise<{
 
 export interface ExportDriveOptions {
   allowOverwrite?: boolean;
+  confirmOverwrite?: boolean;
   role?: 'admin' | 'user';
   eventName?: string;
   eventDate?: string;
@@ -1387,13 +1388,16 @@ export async function exportToGoogleDrive(
   folderName?: string;
   resolvedYear?: number;
   yearSource?: EventYearSource;
-  code?: 'FILE_ALREADY_EXISTS';
+  updatedExisting?: boolean;
+  code?: 'FILE_ALREADY_EXISTS' | 'OVERWRITE_CONFIRMATION_REQUIRED';
+  canOverwrite?: boolean;
   statusCode?: number;
   existingFiles?: string[];
   error?: string;
   message?: string;
 }> {
   const allowOverwrite = options?.allowOverwrite === true;
+  const confirmOverwrite = options?.confirmOverwrite === true;
   const effectiveRole = options?.role || (allowOverwrite ? 'admin' : 'user');
   const auth = getGoogleAuthClient();
 
@@ -1452,29 +1456,56 @@ export async function exportToGoogleDrive(
     if (existingPdf?.name) existingMatches.push(existingPdf.name);
 
     // Atomic conflict check BEFORE uploading either .mss or .pdf
-    if (!allowOverwrite && existingMatches.length > 0) {
-      const conflictMsg = `Setlist „${safeFileName}“ už ve složce „${targetFolderName}“ na Google Disku existuje (${existingMatches.join(', ')}). S vaším PINem nelze existující soubory přepisovat – změňte prosím název setlistu a zkuste export znovu.`;
-      addLog(
-        'warning',
-        'EXPORT_OVERWRITE_BLOCKED',
-        `Blokován pokus o přepis (${effectiveRole}): ${existingMatches.join(', ')} ve složce ${targetFolderName} (${targetFolderId}).`
-      );
-      return {
-        success: false,
-        code: 'FILE_ALREADY_EXISTS',
-        statusCode: 409,
-        fileName: mssTargetName,
-        folderId: targetFolderId,
-        folderName: targetFolderName,
-        resolvedYear: yearResolution.year,
-        yearSource: yearResolution.source,
-        existingFiles: existingMatches,
-        error: conflictMsg,
-        message: conflictMsg,
-      };
+    if (existingMatches.length > 0) {
+      if (!allowOverwrite) {
+        const conflictMsg = `Setlist „${safeFileName}“ už ve složce „${targetFolderName}“ na Google Disku existuje (${existingMatches.join(', ')}). S vaším PINem nelze existující soubory přepisovat – změňte prosím název setlistu a zkuste export znovu.`;
+        addLog(
+          'warning',
+          'EXPORT_OVERWRITE_BLOCKED',
+          `Blokován pokus o přepis (${effectiveRole}): ${existingMatches.join(', ')} ve složce ${targetFolderName} (${targetFolderId}).`
+        );
+        return {
+          success: false,
+          code: 'FILE_ALREADY_EXISTS',
+          statusCode: 409,
+          canOverwrite: false,
+          fileName: mssTargetName,
+          folderId: targetFolderId,
+          folderName: targetFolderName,
+          resolvedYear: yearResolution.year,
+          yearSource: yearResolution.source,
+          existingFiles: existingMatches,
+          error: conflictMsg,
+          message: conflictMsg,
+        };
+      }
+
+      if (!confirmOverwrite) {
+        const confirmMsg = `Setlist „${safeFileName}“ už ve složce „${targetFolderName}“ na Google Disku existuje (${existingMatches.join(', ')}). Chcete stávající soubory přepsat, nebo setlist přejmenovat?`;
+        addLog(
+          'info',
+          'EXPORT_OVERWRITE_CONFIRM',
+          `Vyžádáno potvrzení přepisu (${effectiveRole}): ${existingMatches.join(', ')} ve složce ${targetFolderName} (${targetFolderId}).`
+        );
+        return {
+          success: false,
+          code: 'OVERWRITE_CONFIRMATION_REQUIRED',
+          statusCode: 409,
+          canOverwrite: true,
+          fileName: mssTargetName,
+          folderId: targetFolderId,
+          folderName: targetFolderName,
+          resolvedYear: yearResolution.year,
+          yearSource: yearResolution.source,
+          existingFiles: existingMatches,
+          error: confirmMsg,
+          message: confirmMsg,
+        };
+      }
     }
 
-    const existingMssId = allowOverwrite && existingMss?.id ? existingMss.id : null;
+    const canPatchNow = allowOverwrite && confirmOverwrite;
+    const existingMssId = canPatchNow && existingMss?.id ? existingMss.id : null;
 
     // 3. Upload or update MSS XML file
     const mssBoundary = '-------MssBoundary' + Math.random().toString(36).substring(2);
@@ -1519,7 +1550,7 @@ export async function exportToGoogleDrive(
           pdfBase64,
           token,
           existingPdf?.id || null,
-          allowOverwrite
+          canPatchNow
         );
         pdfFileId = pdfUpload.pdfFileId;
         if (!pdfUpload.pdfFileId && pdfUpload.errorText) {
@@ -1530,11 +1561,12 @@ export async function exportToGoogleDrive(
       }
     }
 
+    const updatedExisting = Boolean(existingMssId || (canPatchNow && existingPdf?.id));
     lastExportedAt = Date.now();
     addLog(
       'success',
       'EXPORT_SUCCESS',
-      `Soubor "${mssTargetName}" byl úspěšně uložen na Google Disk do složky "${targetFolderName}" (${targetFolderId}).`
+      `Soubor "${mssTargetName}" byl úspěšně ${updatedExisting ? 'aktualizován (přepsán)' : 'uložen'} na Google Disk do složky "${targetFolderName}" (${targetFolderId}).`
     );
 
     return {
@@ -1546,7 +1578,10 @@ export async function exportToGoogleDrive(
       folderName: targetFolderName,
       resolvedYear: yearResolution.year,
       yearSource: yearResolution.source,
-      message: `Setlist „${mssTargetName}“ byl úspěšně uložen na Google Disk do složky „Playlisty / ${targetFolderName}“!`,
+      updatedExisting,
+      message: updatedExisting
+        ? `Setlist „${mssTargetName}“ byl úspěšně aktualizován (přepsán) na Google Disku ve složce „Playlisty / ${targetFolderName}“!`
+        : `Setlist „${mssTargetName}“ byl úspěšně uložen na Google Disk do složky „Playlisty / ${targetFolderName}“!`,
     };
   } catch (err: any) {
     addLog('error', 'EXPORT_ERROR', `Chyba při exportu na Disk: ${err.message}`);
@@ -1644,13 +1679,15 @@ export async function uploadPdfOnlyToGoogleDrive(
   folderId?: string;
   folderName?: string;
   updatedExisting?: boolean;
-  code?: 'FILE_ALREADY_EXISTS';
+  code?: 'FILE_ALREADY_EXISTS' | 'OVERWRITE_CONFIRMATION_REQUIRED';
+  canOverwrite?: boolean;
   statusCode?: number;
   existingFiles?: string[];
   error?: string;
   message: string;
 }> {
   const allowOverwrite = options?.allowOverwrite === true;
+  const confirmOverwrite = options?.confirmOverwrite === true;
   const effectiveRole = options?.role || (allowOverwrite ? 'admin' : 'user');
   const auth = getGoogleAuthClient();
   const safeBase = fileName.trim().replace(/\.pdf$/i, '') || 'Seznam pro OSA';
@@ -1693,33 +1730,58 @@ export async function uploadPdfOnlyToGoogleDrive(
       (f) => normalizeDriveFileName(f.name || '') === normalizedPdfTarget
     );
 
-    if (!allowOverwrite && existingPdf) {
-      const conflictMsg = `Soubor „${existingPdf.name}“ už ve složce „${targetFolderName}“ na Google Disku existuje. S vaším PINem nelze existující soubory přepisovat – změňte prosím název akce a zkuste export znovu.`;
-      addLog(
-        'warning',
-        'OSA_EXPORT_OVERWRITE_BLOCKED',
-        `Blokován pokus o přepis OSA PDF (${effectiveRole}): ${existingPdf.name} ve složce ${targetFolderName} (${targetFolderId}).`
-      );
-      return {
-        success: false,
-        code: 'FILE_ALREADY_EXISTS',
-        statusCode: 409,
-        fileName: pdfTargetName,
-        folderId: targetFolderId,
-        folderName: targetFolderName,
-        existingFiles: [existingPdf.name],
-        error: conflictMsg,
-        message: conflictMsg,
-      };
+    if (existingPdf) {
+      if (!allowOverwrite) {
+        const conflictMsg = `Soubor „${existingPdf.name}“ už ve složce „${targetFolderName}“ na Google Disku existuje. S vaším PINem nelze existující soubory přepisovat – změňte prosím název akce a zkuste export znovu.`;
+        addLog(
+          'warning',
+          'OSA_EXPORT_OVERWRITE_BLOCKED',
+          `Blokován pokus o přepis OSA PDF (${effectiveRole}): ${existingPdf.name} ve složce ${targetFolderName} (${targetFolderId}).`
+        );
+        return {
+          success: false,
+          code: 'FILE_ALREADY_EXISTS',
+          statusCode: 409,
+          canOverwrite: false,
+          fileName: pdfTargetName,
+          folderId: targetFolderId,
+          folderName: targetFolderName,
+          existingFiles: [existingPdf.name],
+          error: conflictMsg,
+          message: conflictMsg,
+        };
+      }
+
+      if (!confirmOverwrite) {
+        const confirmMsg = `Soubor „${existingPdf.name}“ už ve složce „${targetFolderName}“ na Google Disku existuje. Chcete jej přepsat, nebo změnit název / datum akce?`;
+        addLog(
+          'info',
+          'OSA_EXPORT_OVERWRITE_CONFIRM',
+          `Vyžádáno potvrzení přepisu OSA PDF (${effectiveRole}): ${existingPdf.name} ve složce ${targetFolderName} (${targetFolderId}).`
+        );
+        return {
+          success: false,
+          code: 'OVERWRITE_CONFIRMATION_REQUIRED',
+          statusCode: 409,
+          canOverwrite: true,
+          fileName: pdfTargetName,
+          folderId: targetFolderId,
+          folderName: targetFolderName,
+          existingFiles: [existingPdf.name],
+          error: confirmMsg,
+          message: confirmMsg,
+        };
+      }
     }
 
+    const canPatchNow = allowOverwrite && confirmOverwrite;
     const uploadRes = await uploadPdfToDriveFolder(
       targetFolderId,
       pdfTargetName,
       pdfBase64,
       token,
       existingPdf?.id || null,
-      allowOverwrite
+      canPatchNow
     );
     if (!uploadRes.pdfFileId) {
       throw new Error(
@@ -1731,7 +1793,7 @@ export async function uploadPdfOnlyToGoogleDrive(
     addLog(
       'success',
       'OSA_EXPORT_SUCCESS',
-      `Seznam pro OSA "${pdfTargetName}" byl úspěšně uložen na Google Disk (ID: ${uploadRes.pdfFileId}, složka: ${targetFolderName} / ${targetFolderId}).`
+      `Seznam pro OSA "${pdfTargetName}" byl úspěšně ${uploadRes.updatedExisting ? 'aktualizován (přepsán)' : 'uložen'} na Google Disk (ID: ${uploadRes.pdfFileId}, složka: ${targetFolderName} / ${targetFolderId}).`
     );
 
     return {
@@ -1741,7 +1803,9 @@ export async function uploadPdfOnlyToGoogleDrive(
       folderId: targetFolderId,
       folderName: targetFolderName,
       updatedExisting: uploadRes.updatedExisting,
-      message: `Seznam pro OSA „${pdfTargetName}“ byl úspěšně uložen na Google Disk do složky „Playlisty / ${targetFolderName}“.`,
+      message: uploadRes.updatedExisting
+        ? `Seznam pro OSA „${pdfTargetName}“ byl úspěšně aktualizován (přepsán) na Google Disku ve složce „Playlisty / ${targetFolderName}“.`
+        : `Seznam pro OSA „${pdfTargetName}“ byl úspěšně uložen na Google Disk do složky „Playlisty / ${targetFolderName}“.`,
     };
   } catch (err: any) {
     addLog('error', 'OSA_EXPORT_ERROR', `Chyba při exportu seznamu pro OSA na Disk: ${err.message}`);

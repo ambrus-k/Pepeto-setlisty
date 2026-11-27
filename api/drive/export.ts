@@ -26,10 +26,11 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   }
 
   try {
-    const { fileName, mssXml, pdfBase64, pdfOnly, eventName, eventDate } = req.body || {};
+    const { fileName, mssXml, pdfBase64, pdfOnly, eventName, eventDate, confirmOverwrite } = req.body || {};
     const auth = resolveExportAuth(req.headers);
     const exportOptions = {
       allowOverwrite: auth.allowOverwrite,
+      confirmOverwrite: confirmOverwrite === true,
       role: auth.role,
       eventName: typeof eventName === 'string' ? eventName : undefined,
       eventDate: typeof eventDate === 'string' ? eventDate : undefined,

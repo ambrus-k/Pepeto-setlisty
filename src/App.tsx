@@ -322,6 +322,7 @@ function SetlistStudio() {
     existingFiles?: string[];
     folderName?: string;
     resolvedYear?: number;
+    canOverwrite?: boolean;
   }>({ state: 'idle' });
 
   const resolvedYearInfo = useMemo(
@@ -653,8 +654,10 @@ function SetlistStudio() {
                 showWarning(
                   errData.message ||
                     errData.error ||
-                    `Soubor „${item.fileName}“ už na Google Disku existuje a nelze jej přepsat. Změňte název a exportujte znovu.`,
-                  'Existující setlist nelze přepsat'
+                    (errData.canOverwrite
+                      ? `Soubor „${item.fileName}“ už na Google Disku existuje. Spusťte export znovu a vyberte, zda jej chcete přepsat nebo přejmenovat.`
+                      : `Soubor „${item.fileName}“ už na Google Disku existuje a nelze jej přepsat. Změňte název a exportujte znovu.`),
+                  errData.canOverwrite ? 'Soubor už na Disku existuje' : 'Existující setlist nelze přepsat'
                 );
               }
               continue;
@@ -683,8 +686,10 @@ function SetlistStudio() {
               showWarning(
                 errData.message ||
                   errData.error ||
-                  `Setlist „${item.fileName}“ už na Google Disku existuje a nelze jej přepsat. Změňte název a exportujte znovu.`,
-                'Existující setlist nelze přepsat'
+                  (errData.canOverwrite
+                    ? `Setlist „${item.fileName}“ už na Google Disku existuje. Spusťte export znovu a vyberte, zda jej chcete přepsat nebo přejmenovat.`
+                    : `Setlist „${item.fileName}“ už na Google Disku existuje a nelze jej přepsat. Změňte název a exportujte znovu.`),
+                errData.canOverwrite ? 'Soubor už na Disku existuje' : 'Existující setlist nelze přepsat'
               );
             }
           } catch (itemErr) {
@@ -1391,7 +1396,12 @@ function SetlistStudio() {
   };
 
   // 7. Export Generator & Silent Backend Drive Export
-  const handleGenerateAndSave = async (overrideEventName?: string, overrideEventDate?: string) => {
+  const handleGenerateAndSave = async (
+    overrideEventName?: string,
+    overrideEventDate?: string,
+    options?: { confirmOverwrite?: boolean }
+  ) => {
+    const confirmOverwrite = options?.confirmOverwrite === true;
     const nextEventName = typeof overrideEventName === 'string' ? overrideEventName : eventName;
     const nextEventDate = typeof overrideEventDate === 'string' ? overrideEventDate : eventDate;
     if (typeof overrideEventName === 'string') {
@@ -1508,6 +1518,7 @@ function SetlistStudio() {
             pdfBase64,
             eventName: nextEventName.trim() || safeName,
             eventDate: nextEventDate || undefined,
+            confirmOverwrite,
           }),
         });
 
@@ -1526,18 +1537,28 @@ function SetlistStudio() {
               data.message ||
               `Setlist "${mssFileName}" byl úspěšně uložen na Google Disk do složky „Playlisty / ${resolvedFolder}“!`,
           });
-        } else if (res.status === 409 || data.code === 'FILE_ALREADY_EXISTS') {
+        } else if (
+          res.status === 409 ||
+          data.code === 'FILE_ALREADY_EXISTS' ||
+          data.code === 'OVERWRITE_CONFIRMATION_REQUIRED'
+        ) {
+          const canOverwrite =
+            data.canOverwrite === true || data.code === 'OVERWRITE_CONFIRMATION_REQUIRED';
           const conflictMsg =
             data.error ||
             data.message ||
-            `Setlist „${safeName}“ už ve složce „${resolvedFolder}“ na Google Disku existuje. S vaším PINem nelze existující soubory přepisovat – změňte název setlistu a zkuste export znovu.`;
+            (canOverwrite
+              ? `Setlist „${safeName}“ už ve složce „${resolvedFolder}“ na Google Disku existuje. Chcete stávající soubory přepsat, nebo setlist přejmenovat?`
+              : `Setlist „${safeName}“ už ve složce „${resolvedFolder}“ na Google Disku existuje. S vaším PINem nelze existující soubory přepisovat – změňte název setlistu a zkuste export znovu.`);
           pushLog(`⚠️ ${conflictMsg}`);
           updateStep(
             'drive_upload',
             'error',
             100,
             'Setlist s tímto názvem už existuje',
-            'Změňte název setlistu a zkuste export znovu'
+            canOverwrite
+              ? 'Vyberte, zda stávající soubory přepsat, nebo setlist přejmenovat'
+              : 'Změňte název setlistu a zkuste export znovu'
           );
           setDriveExportStatus({
             state: 'conflict',
@@ -1545,6 +1566,7 @@ function SetlistStudio() {
             resolvedYear,
             message: conflictMsg,
             existingFiles: Array.isArray(data.existingFiles) ? data.existingFiles : undefined,
+            canOverwrite,
           });
           return;
         } else {
@@ -1603,7 +1625,12 @@ function SetlistStudio() {
   };
 
   // 8. OSA Playlist PDF Export (exclusively to Google Drive "Playlisty / Osa seznam" folder)
-  const handleGenerateOsaList = async (overrideEventName?: string, overrideEventDate?: string) => {
+  const handleGenerateOsaList = async (
+    overrideEventName?: string,
+    overrideEventDate?: string,
+    options?: { confirmOverwrite?: boolean }
+  ) => {
+    const confirmOverwrite = options?.confirmOverwrite === true;
     const rawEventName = typeof overrideEventName === 'string' ? overrideEventName : eventName;
     const nextEventDate = typeof overrideEventDate === 'string' ? overrideEventDate : eventDate;
     if (typeof overrideEventName === 'string') {
@@ -1668,21 +1695,31 @@ function SetlistStudio() {
             pdfOnly: true,
             eventName: trimmedEvent,
             eventDate: nextEventDate || undefined,
+            confirmOverwrite,
           }),
         });
 
         const data = await res.json().catch(() => ({}));
         const resolvedOsaFolder = data.folderName || 'Osa seznam';
-        if (res.status === 409 || data.code === 'FILE_ALREADY_EXISTS') {
+        if (
+          res.status === 409 ||
+          data.code === 'FILE_ALREADY_EXISTS' ||
+          data.code === 'OVERWRITE_CONFIRMATION_REQUIRED'
+        ) {
+          const canOverwrite =
+            data.canOverwrite === true || data.code === 'OVERWRITE_CONFIRMATION_REQUIRED';
           const conflictMsg =
             data.error ||
             data.message ||
-            `Soubor „${fileName}“ už ve složce „${resolvedOsaFolder}“ na Google Disku existuje. Změňte prosím název akce a zkuste export znovu.`;
+            (canOverwrite
+              ? `Soubor „${fileName}“ už ve složce „${resolvedOsaFolder}“ na Google Disku existuje. Chcete jej přepsat, nebo změnit název / datum akce?`
+              : `Soubor „${fileName}“ už ve složce „${resolvedOsaFolder}“ na Google Disku existuje. Změňte prosím název akce a zkuste export znovu.`);
           setOsaDriveStatus({
             state: 'conflict',
             folderName: resolvedOsaFolder,
             message: conflictMsg,
             existingFiles: Array.isArray(data.existingFiles) ? data.existingFiles : undefined,
+            canOverwrite,
           });
           return;
         }
@@ -1908,7 +1945,12 @@ function SetlistStudio() {
         isExporting={isExporting}
         exportProgress={exportProgress}
         driveStatus={driveExportStatus}
-        onRenameAndRetry={(newName, newDate) => handleGenerateAndSave(newName, newDate)}
+        onRenameAndRetry={(newName, newDate) =>
+          handleGenerateAndSave(newName, newDate, { confirmOverwrite: false })
+        }
+        onConfirmOverwrite={() =>
+          handleGenerateAndSave(undefined, undefined, { confirmOverwrite: true })
+        }
       />
 
       {/* OSA Export Modal (Drive-only export) */}
@@ -1916,7 +1958,12 @@ function SetlistStudio() {
         isOpen={isOsaExportOpen}
         onClose={() => setIsOsaExportOpen(false)}
         onRetryUpload={() => handleGenerateOsaList()}
-        onRenameAndRetry={(newName, newDate) => handleGenerateOsaList(newName, newDate)}
+        onRenameAndRetry={(newName, newDate) =>
+          handleGenerateOsaList(newName, newDate, { confirmOverwrite: false })
+        }
+        onConfirmOverwrite={() =>
+          handleGenerateOsaList(undefined, undefined, { confirmOverwrite: true })
+        }
         eventName={eventName}
         eventDate={eventDate}
         fileName={osaFileName}
