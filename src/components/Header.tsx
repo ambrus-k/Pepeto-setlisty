@@ -256,8 +256,19 @@ export const Header: React.FC<HeaderProps> = ({
                   <div className="my-1.5 border-t border-slate-200 dark:border-slate-800" />
 
                   {/* EXPORT SECTION */}
-                  <div className="px-3 pt-0.5 pb-1 text-[0.625rem] font-bold uppercase tracking-wider text-slate-400 dark:text-slate-500">
-                    Export
+                  <div className="px-3 pt-0.5 pb-1 flex items-center justify-between gap-2">
+                    <span className="text-[0.625rem] font-bold uppercase tracking-wider text-slate-400 dark:text-slate-500">
+                      Export
+                    </span>
+                    <span
+                      className={`text-[0.625rem] font-semibold ${
+                        role === 'admin'
+                          ? 'text-emerald-600 dark:text-emerald-400'
+                          : 'text-amber-600 dark:text-amber-400'
+                      }`}
+                    >
+                      {role === 'admin' ? 'Správce: lze přepsat' : 'Uživatel: jen nové'}
+                    </span>
                   </div>
 
                   <button

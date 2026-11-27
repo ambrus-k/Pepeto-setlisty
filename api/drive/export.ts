@@ -32,6 +32,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       allowOverwrite: auth.allowOverwrite,
       confirmOverwrite: confirmOverwrite === true,
       role: auth.role,
+      tokenVerified: auth.tokenVerified,
       eventName: typeof eventName === 'string' ? eventName : undefined,
       eventDate: typeof eventDate === 'string' ? eventDate : undefined,
     };

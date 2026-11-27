@@ -16,8 +16,14 @@ import {
   Save,
   CheckCircle,
   XCircle,
+  FileText,
+  Code2,
+  FileEdit,
+  Lock,
+  ShieldAlert,
 } from 'lucide-react';
 import { AdminLogEntry, ServerDriveStatus } from '../types';
+import { useAuth } from '../context/AuthContext';
 
 interface AdminPanelModalProps {
   isOpen: boolean;
@@ -25,6 +31,27 @@ interface AdminPanelModalProps {
   onTriggerSync: (force: boolean) => Promise<void>;
   isSyncing: boolean;
   totalSongs: number;
+  onLoadDriveSetlist?: (mssXml: string, fileName: string) => void | Promise<void>;
+}
+
+interface DriveSetlistFolderOption {
+  key: string;
+  label: string;
+  folderId: string;
+  kind: 'year' | 'osa';
+  year?: number;
+}
+
+interface DriveSetlistFileEntry {
+  id: string;
+  name: string;
+  mimeType?: string;
+  size?: string;
+  modifiedTime?: string;
+  folderKey: string;
+  folderName: string;
+  folderId: string;
+  fileType: 'mss' | 'pdf';
 }
 
 interface YearFolderStatus {
@@ -89,13 +116,25 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
   onTriggerSync,
   isSyncing,
   totalSongs,
+  onLoadDriveSetlist,
 }) => {
-  const [activeTab, setActiveTab] = useState<'overview' | 'folders' | 'logs' | 'guide'>('overview');
+  const { token, isAdminTokenVerified } = useAuth();
+  const [activeTab, setActiveTab] = useState<'overview' | 'setlists' | 'folders' | 'logs' | 'guide'>('overview');
   const [serverStatus, setServerStatus] = useState<ServerDriveStatus | null>(null);
   const [logs, setLogs] = useState<AdminLogEntry[]>([]);
   const [isLoadingLogs, setIsLoadingLogs] = useState(false);
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
   const [syncFeedback, setSyncFeedback] = useState<string | null>(null);
+
+  // Admin Drive Setlists browser state
+  const [driveFolders, setDriveFolders] = useState<DriveSetlistFolderOption[]>([]);
+  const [driveFiles, setDriveFiles] = useState<DriveSetlistFileEntry[]>([]);
+  const [selectedSetlistFolder, setSelectedSetlistFolder] = useState<string>('all');
+  const [isLoadingSetlists, setIsLoadingSetlists] = useState(false);
+  const [setlistsConfigured, setSetlistsConfigured] = useState(true);
+  const [setlistsNotice, setSetlistsNotice] = useState<string | null>(null);
+  const [setlistsError, setSetlistsError] = useState<string | null>(null);
+  const [loadingFileId, setLoadingFileId] = useState<string | null>(null);
 
   // Folder configuration state - prefilled permanently with band's structured folders
   const [rootFolderInput, setRootFolderInput] = useState(PERMANENT_ROOT_FOLDER_ID);
@@ -114,6 +153,68 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
       runConnectionTest();
     }
   }, [isOpen]);
+
+  const loadDriveSetlistsBrowser = async (folderKey = selectedSetlistFolder) => {
+    setIsLoadingSetlists(true);
+    setSetlistsError(null);
+    setSetlistsNotice(null);
+    try {
+      const headers: Record<string, string> = {};
+      if (token) {
+        headers.Authorization = `Bearer ${token}`;
+      }
+      const res = await fetch(
+        `/api/drive/setlists?folder=${encodeURIComponent(folderKey)}&t=${Date.now()}`,
+        { headers, cache: 'no-store' }
+      );
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || data.success === false) {
+        throw new Error(data.error || `Chyba serveru (${res.status}) při načítání seznamu setlistů.`);
+      }
+      setDriveFolders(Array.isArray(data.folders) ? data.folders : []);
+      setDriveFiles(Array.isArray(data.files) ? data.files : []);
+      setSetlistsConfigured(data.configured !== false);
+      if (data.message) {
+        setSetlistsNotice(data.message);
+      }
+    } catch (err: any) {
+      setSetlistsError(err?.message || 'Nepodařilo se načíst seznam setlistů z Google Disku.');
+    } finally {
+      setIsLoadingSetlists(false);
+    }
+  };
+
+  useEffect(() => {
+    if (isOpen && activeTab === 'setlists') {
+      loadDriveSetlistsBrowser(selectedSetlistFolder);
+    }
+  }, [isOpen, activeTab, selectedSetlistFolder, token]);
+
+  const handleLoadFileForEdit = async (fileId: string, fileName: string) => {
+    if (!onLoadDriveSetlist || loadingFileId) return;
+    setLoadingFileId(fileId);
+    setSetlistsError(null);
+    try {
+      const headers: Record<string, string> = {};
+      if (token) {
+        headers.Authorization = `Bearer ${token}`;
+      }
+      const res = await fetch(
+        `/api/drive/setlists?fileId=${encodeURIComponent(fileId)}&t=${Date.now()}`,
+        { headers, cache: 'no-store' }
+      );
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || data.success === false || !data.mssXml) {
+        throw new Error(data.error || `Nepodařilo se stáhnout setlist „${fileName}“.`);
+      }
+      await onLoadDriveSetlist(data.mssXml, data.fileName || fileName);
+      onClose();
+    } catch (err: any) {
+      setSetlistsError(err?.message || 'Nepodařilo se načíst vybraný setlist.');
+    } finally {
+      setLoadingFileId(null);
+    }
+  };
 
   const loadServerInfo = async () => {
     setIsLoadingLogs(true);
@@ -242,7 +343,7 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
         <div className="flex items-center gap-2 mt-4 border-b border-slate-800 pb-2 overflow-x-auto">
           <button
             onClick={() => setActiveTab('overview')}
-            className={`px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition shrink-0 ${
+            className={`px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition shrink-0 cursor-pointer ${
               activeTab === 'overview'
                 ? 'bg-slate-800 text-white shadow-sm'
                 : 'text-slate-400 hover:text-slate-200'
@@ -252,8 +353,19 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
             <span>Stav &amp; Diagnostika</span>
           </button>
           <button
+            onClick={() => setActiveTab('setlists')}
+            className={`px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition shrink-0 cursor-pointer ${
+              activeTab === 'setlists'
+                ? 'bg-slate-800 text-white shadow-sm'
+                : 'text-slate-400 hover:text-slate-200'
+            }`}
+          >
+            <FileEdit className="w-3.5 h-3.5 text-emerald-400" />
+            <span>Setlisty na Disku</span>
+          </button>
+          <button
             onClick={() => setActiveTab('folders')}
-            className={`px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition shrink-0 ${
+            className={`px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition shrink-0 cursor-pointer ${
               activeTab === 'folders'
                 ? 'bg-slate-800 text-white shadow-sm'
                 : 'text-slate-400 hover:text-slate-200'
@@ -422,6 +534,46 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
                 </span>
               </div>
 
+              {/* Overwrite Permissions Status Card */}
+              <div className="p-3.5 rounded-xl bg-slate-800/70 border border-slate-700 text-xs space-y-2">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <span className="font-bold text-white flex items-center gap-1.5">
+                    <ShieldCheck className="w-4 h-4 text-emerald-400" />
+                    <span>Oprávnění zápisu a přepisování setlistů</span>
+                  </span>
+                  {isAdminTokenVerified ? (
+                    <span className="px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 text-[11px] font-bold flex items-center gap-1">
+                      <CheckCircle2 className="w-3 h-3" />
+                      <span>Admin token ověřen serverem (přepis povolen)</span>
+                    </span>
+                  ) : token ? (
+                    <span className="px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/40 text-[11px] font-bold flex items-center gap-1">
+                      <ShieldAlert className="w-3 h-3" />
+                      <span>Admin token čeká na ověření / offline</span>
+                    </span>
+                  ) : (
+                    <span className="px-2 py-0.5 rounded-full bg-rose-500/20 text-rose-300 border border-rose-500/40 text-[11px] font-bold flex items-center gap-1">
+                      <Lock className="w-3 h-3" />
+                      <span>Chybí serverový token – při přepisu zadejte Admin PIN</span>
+                    </span>
+                  )}
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1 text-[11px] text-slate-300">
+                  <div className="rounded-lg bg-emerald-950/30 border border-emerald-800/50 px-2.5 py-2">
+                    <strong className="text-emerald-300 block">Správce (Admin PIN)</strong>
+                    <span>
+                      Může <strong>opravovat a přepisovat</strong> existující setlisty na Disku (.mss, .pdf i Osa seznam) po potvrzení v exportním dialogu.
+                    </span>
+                  </div>
+                  <div className="rounded-lg bg-amber-950/30 border border-amber-800/50 px-2.5 py-2">
+                    <strong className="text-amber-300 block">Ostatní uživatelé (PIN muzikant)</strong>
+                    <span>
+                      Mohou <strong>pouze vytvářet nové</strong> setlisty. Přepsání existujících souborů je na serveru zablokováno (HTTP 409).
+                    </span>
+                  </div>
+                </div>
+              </div>
+
               {/* Status Overview Cards */}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
                 <div className="p-3.5 rounded-xl bg-slate-800/60 border border-slate-700">
@@ -530,6 +682,144 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
                     </span>
                   ))}
                 </div>
+              </div>
+            </div>
+          )}
+
+          {/* TAB 1b: ADMIN DRIVE SETLISTS BROWSER */}
+          {activeTab === 'setlists' && (
+            <div className="space-y-3 text-xs">
+              <div className="p-3.5 rounded-xl bg-slate-800/60 border border-slate-700 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
+                <div>
+                  <h3 className="text-sm font-bold text-white flex items-center gap-2">
+                    <FileEdit className="w-4 h-4 text-emerald-400" />
+                    <span>Existující setlisty na Google Disku (pouze pro správce)</span>
+                  </h3>
+                  <p className="text-[11px] text-slate-300 mt-0.5">
+                    Vyberte uložený setlist (.mss), načtěte ho do editoru a po úpravě jej přes <strong>Export MSS na Disk</strong> přepište.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => loadDriveSetlistsBrowser(selectedSetlistFolder)}
+                  disabled={isLoadingSetlists}
+                  className="inline-flex items-center gap-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white font-bold text-xs px-3.5 py-2 transition cursor-pointer shrink-0"
+                >
+                  <RefreshCw className={`w-3.5 h-3.5 ${isLoadingSetlists ? 'animate-spin' : ''}`} />
+                  <span>Obnovit seznam</span>
+                </button>
+              </div>
+
+              {/* Folder Filter Chips */}
+              <div className="flex flex-wrap items-center gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => setSelectedSetlistFolder('all')}
+                  className={`px-2.5 py-1 rounded-lg text-[11px] font-bold border transition cursor-pointer ${
+                    selectedSetlistFolder === 'all'
+                      ? 'bg-indigo-600 border-indigo-500 text-white'
+                      : 'bg-slate-800 border-slate-700 text-slate-300 hover:bg-slate-700'
+                  }`}
+                >
+                  Všechny roční složky
+                </button>
+                {driveFolders.map((folder) => (
+                  <button
+                    key={folder.key}
+                    type="button"
+                    onClick={() => setSelectedSetlistFolder(folder.key)}
+                    className={`px-2.5 py-1 rounded-lg text-[11px] font-bold border transition cursor-pointer ${
+                      selectedSetlistFolder === folder.key
+                        ? folder.kind === 'osa'
+                          ? 'bg-blue-600 border-blue-500 text-white'
+                          : 'bg-indigo-600 border-indigo-500 text-white'
+                        : 'bg-slate-800 border-slate-700 text-slate-300 hover:bg-slate-700'
+                    }`}
+                  >
+                    {folder.label}
+                  </button>
+                ))}
+              </div>
+
+              {setlistsError && (
+                <div className="p-3 rounded-xl bg-rose-950/60 border border-rose-700/70 text-rose-200 flex items-start gap-2">
+                  <AlertCircle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
+                  <span>{setlistsError}</span>
+                </div>
+              )}
+
+              {!setlistsConfigured && setlistsNotice && (
+                <div className="p-3 rounded-xl bg-amber-950/50 border border-amber-700/60 text-amber-200 flex items-start gap-2">
+                  <AlertCircle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+                  <span>{setlistsNotice}</span>
+                </div>
+              )}
+
+              <div className="rounded-xl border border-slate-800 bg-slate-950 divide-y divide-slate-800/80 max-h-[340px] overflow-y-auto">
+                {isLoadingSetlists ? (
+                  <div className="py-10 text-center text-slate-400 flex items-center justify-center gap-2">
+                    <RefreshCw className="w-4 h-4 animate-spin text-indigo-400" />
+                    <span>Načítám seznam souborů z Google Disku…</span>
+                  </div>
+                ) : driveFiles.length === 0 ? (
+                  <div className="py-10 text-center text-slate-500">
+                    {setlistsConfigured
+                      ? 'Ve zvolené složce zatím nejsou žádné exportované soubory (.mss / .pdf).'
+                      : 'Lokální náhled bez aktivního Google Disk připojení.'}
+                  </div>
+                ) : (
+                  driveFiles.map((file) => {
+                    const sizeKb = file.size
+                      ? `${Math.max(1, Math.round(parseInt(file.size, 10) / 1024))} kB`
+                      : '';
+                    const modifiedLabel = file.modifiedTime
+                      ? new Date(file.modifiedTime).toLocaleString('cs-CZ')
+                      : '';
+                    const isMss = file.fileType === 'mss';
+                    const isLoadingThis = loadingFileId === file.id;
+
+                    return (
+                      <div
+                        key={file.id}
+                        className="p-2.5 flex flex-col sm:flex-row sm:items-center justify-between gap-2 hover:bg-slate-900/70 transition"
+                      >
+                        <div className="flex items-start gap-2.5 min-w-0">
+                          {isMss ? (
+                            <Code2 className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
+                          ) : (
+                            <FileText className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
+                          )}
+                          <div className="min-w-0">
+                            <div className="font-bold text-white truncate">{file.name}</div>
+                            <div className="text-[11px] text-slate-400 flex flex-wrap items-center gap-x-2 gap-y-0.5 mt-0.5">
+                              <span className="px-1.5 py-0.2 rounded bg-slate-800 border border-slate-700 text-indigo-300 font-mono">
+                                {file.folderName}
+                              </span>
+                              {modifiedLabel && <span>{modifiedLabel}</span>}
+                              {sizeKb && <span className="font-mono">{sizeKb}</span>}
+                            </div>
+                          </div>
+                        </div>
+
+                        {isMss && onLoadDriveSetlist && (
+                          <button
+                            type="button"
+                            onClick={() => handleLoadFileForEdit(file.id, file.name)}
+                            disabled={Boolean(loadingFileId)}
+                            className="inline-flex items-center justify-center gap-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white font-bold text-xs px-3 py-1.5 transition cursor-pointer shrink-0"
+                          >
+                            {isLoadingThis ? (
+                              <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                            ) : (
+                              <FileEdit className="w-3.5 h-3.5" />
+                            )}
+                            <span>{isLoadingThis ? 'Načítám…' : 'Načíst k opravě'}</span>
+                          </button>
+                        )}
+                      </div>
+                    );
+                  })
+                )}
               </div>
             </div>
           )}

@@ -11,16 +11,27 @@ type NextApiResponse = {
   setHeader: (name: string, value: string | string[]) => void;
 };
 
-import { createAuthToken, verifyPin } from '../../src/services/authToken.ts';
+import { createAuthToken, resolveExportAuth, verifyPin } from '../../src/services/authToken.ts';
 
 /**
  * Next.js API Route: /api/auth/verify
  *
- * Verifies PIN input and returns role ('user' or 'admin') with a signed session token.
+ * GET: Verifies whether the current session token is valid on the server (and whether overwrite is allowed).
+ * POST: Verifies PIN input and returns role ('user' or 'admin') with a signed session token.
  */
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
+  if (req.method === 'GET') {
+    res.setHeader('Cache-Control', 'no-store, max-age=0');
+    const auth = resolveExportAuth(req.headers);
+    return res.status(200).json({
+      valid: auth.tokenVerified,
+      role: auth.role,
+      allowOverwrite: auth.allowOverwrite,
+    });
+  }
+
   if (req.method !== 'POST') {
-    res.setHeader('Allow', ['POST']);
+    res.setHeader('Allow', ['GET', 'POST']);
     return res.status(405).json({ error: `Metoda ${req.method} není povolena.` });
   }
 

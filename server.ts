@@ -5,6 +5,8 @@ import {
   syncMasterSongsFromDrive,
   exportToGoogleDrive,
   uploadPdfOnlyToGoogleDrive,
+  listDriveSetlists,
+  downloadDriveSetlistMss,
   getServerDriveStatus,
   getAdminLogs,
   saveFolderSettings,
@@ -24,7 +26,17 @@ const isProduction = process.env.NODE_ENV === 'production';
 app.use(express.json({ limit: '30mb' }));
 app.use(express.urlencoded({ extended: true, limit: '30mb' }));
 
-// 1. PIN verification endpoint
+// 1. PIN & token verification endpoints
+app.get('/api/auth/verify', (req: Request, res: Response) => {
+  res.setHeader('Cache-Control', 'no-store, max-age=0');
+  const auth = resolveExportAuth(req.headers as Record<string, string | string[] | undefined>);
+  return res.json({
+    valid: auth.tokenVerified,
+    role: auth.role,
+    allowOverwrite: auth.allowOverwrite,
+  });
+});
+
 app.post('/api/auth/verify', (req: Request, res: Response) => {
   const { pin } = req.body || {};
   const role = verifyPin(pin);
@@ -68,6 +80,7 @@ app.post('/api/drive/export', async (req: Request, res: Response) => {
       allowOverwrite: auth.allowOverwrite,
       confirmOverwrite: confirmOverwrite === true,
       role: auth.role,
+      tokenVerified: auth.tokenVerified,
       eventName: typeof eventName === 'string' ? eventName : undefined,
       eventDate: typeof eventDate === 'string' ? eventDate : undefined,
     };
@@ -105,6 +118,35 @@ app.post('/api/drive/export', async (req: Request, res: Response) => {
     return res.status(500).json({
       success: false,
       error: err.message || 'Chyba při exportu na Google Disk.',
+    });
+  }
+});
+
+// 3b. Admin-only Google Drive Setlists browser & loader
+app.get('/api/drive/setlists', async (req: Request, res: Response) => {
+  res.setHeader('Cache-Control', 'no-store, max-age=0');
+  const auth = resolveExportAuth(req.headers as Record<string, string | string[] | undefined>);
+  if (!auth.allowOverwrite || auth.role !== 'admin') {
+    return res.status(403).json({
+      success: false,
+      error: 'Přístup k seznamu a správě setlistů na Disku má pouze administrátor.',
+    });
+  }
+
+  try {
+    const fileId = typeof req.query.fileId === 'string' ? req.query.fileId.trim() : '';
+    if (fileId) {
+      const downloaded = await downloadDriveSetlistMss(fileId);
+      return res.json(downloaded);
+    }
+
+    const folderKey = typeof req.query.folder === 'string' ? req.query.folder.trim() : 'all';
+    const listed = await listDriveSetlists(folderKey || 'all');
+    return res.json(listed);
+  } catch (err: any) {
+    return res.status(500).json({
+      success: false,
+      error: err?.message || 'Chyba při načítání setlistů z Google Disku.',
     });
   }
 });

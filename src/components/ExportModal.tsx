@@ -18,7 +18,7 @@ import {
   Calendar,
 } from 'lucide-react';
 import { downloadFile, cleanTitleForPdf } from '../services/exportGenerator';
-import { SetlistGroup, Song } from '../types';
+import { SetlistGroup, Song, UserRole } from '../types';
 import { EventDatePicker } from './EventDatePicker';
 import {
   composeEventFileBaseName,
@@ -65,6 +65,8 @@ interface Props {
   };
   onRenameAndRetry?: (newEventName: string, newEventDate?: string) => void;
   onConfirmOverwrite?: () => void;
+  role?: UserRole;
+  onReverifyAdminAndOverwrite?: (pin: string) => Promise<{ success: boolean; error?: string }>;
 }
 
 /**
@@ -105,6 +107,8 @@ export const ExportModal: React.FC<Props> = ({
   driveStatus,
   onRenameAndRetry,
   onConfirmOverwrite,
+  role,
+  onReverifyAdminAndOverwrite,
 }) => {
   const [activeTab, setActiveTab] = useState<'progress' | 'preview' | 'xml'>('progress');
   const [copied, setCopied] = useState(false);
@@ -112,12 +116,17 @@ export const ExportModal: React.FC<Props> = ({
   const [renameDraft, setRenameDraft] = useState(eventName);
   const [renameDateDraft, setRenameDateDraft] = useState(eventDate);
   const [isOverwritePromptOpen, setIsOverwritePromptOpen] = useState(false);
+  const [adminPinDraft, setAdminPinDraft] = useState('');
+  const [adminReverifyError, setAdminReverifyError] = useState<string | null>(null);
+  const [isReverifyingAdmin, setIsReverifyingAdmin] = useState(false);
   const terminalEndRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (isOpen) {
       setRenameDraft(eventName);
       setRenameDateDraft(eventDate);
+      setAdminPinDraft('');
+      setAdminReverifyError(null);
     }
   }, [isOpen, eventName, eventDate, driveStatus.state]);
 
@@ -452,6 +461,56 @@ export const ExportModal: React.FC<Props> = ({
                   </button>
                 )}
               </div>
+
+              {!driveStatus.canOverwrite && role === 'admin' && onReverifyAdminAndOverwrite && (
+                <form
+                  onSubmit={async (e) => {
+                    e.preventDefault();
+                    if (!adminPinDraft.trim() || isReverifyingAdmin || isExporting) return;
+                    setIsReverifyingAdmin(true);
+                    setAdminReverifyError(null);
+                    try {
+                      const res = await onReverifyAdminAndOverwrite(adminPinDraft.trim());
+                      if (!res.success) {
+                        setAdminReverifyError(res.error || 'Neplatný Admin PIN.');
+                      } else {
+                        setAdminPinDraft('');
+                      }
+                    } finally {
+                      setIsReverifyingAdmin(false);
+                    }
+                  }}
+                  className="rounded-xl bg-rose-950/50 border border-rose-500/50 p-3 space-y-2"
+                >
+                  <div className="text-[11px] font-bold text-rose-200">
+                    Administrátorská relace potřebuje znovu ověřit PIN, aby bylo možné existující setlist přepsat:
+                  </div>
+                  <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
+                    <input
+                      type="password"
+                      inputMode="numeric"
+                      value={adminPinDraft}
+                      onChange={(e) => {
+                        setAdminPinDraft(e.target.value);
+                        setAdminReverifyError(null);
+                      }}
+                      placeholder="Zadejte Admin PIN..."
+                      className="flex-1 rounded-lg bg-slate-900 border border-rose-500/60 px-3 py-2 text-xs font-semibold text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-rose-400"
+                    />
+                    <button
+                      type="submit"
+                      disabled={!adminPinDraft.trim() || isReverifyingAdmin || isExporting}
+                      className="inline-flex items-center justify-center gap-1.5 rounded-lg bg-rose-600 hover:bg-rose-500 disabled:opacity-40 text-white font-bold text-xs px-3.5 py-2 transition cursor-pointer shrink-0"
+                    >
+                      <CloudUpload className="w-3.5 h-3.5" />
+                      <span>{isReverifyingAdmin ? 'Ověřuji...' : 'Ověřit Admin PIN a přepsat'}</span>
+                    </button>
+                  </div>
+                  {adminReverifyError && (
+                    <div className="text-[11px] text-rose-300 font-semibold">{adminReverifyError}</div>
+                  )}
+                </form>
+              )}
 
               {onRenameAndRetry && (
                 <form

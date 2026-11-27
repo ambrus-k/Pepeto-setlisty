@@ -169,18 +169,22 @@ function buildPaneData(
 
 function SetlistStudio() {
   const isOnline = useOnlineStatus();
-  const { role, token, logout } = useAuth();
+  const { role, token, login, logout } = useAuth();
   const { showSuccess, showError, showWarning } = useToast();
 
-  const buildExportHeaders = useCallback((): Record<string, string> => {
-    const headers: Record<string, string> = {
-      'Content-Type': 'application/json',
-    };
-    if (token) {
-      headers.Authorization = `Bearer ${token}`;
-    }
-    return headers;
-  }, [token]);
+  const buildExportHeaders = useCallback(
+    (overrideToken?: string): Record<string, string> => {
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/json',
+      };
+      const effectiveToken = overrideToken || token;
+      if (effectiveToken) {
+        headers.Authorization = `Bearer ${effectiveToken}`;
+      }
+      return headers;
+    },
+    [token]
+  );
 
   // Instant synchronous hydration from localStorage mirror (survives Android pull-to-refresh without race condition)
   const initialSyncProjectRef = useRef<EventProject | null | undefined>(undefined);
@@ -1373,6 +1377,35 @@ function SetlistStudio() {
     }
   };
 
+  // 5b. Load an existing .mss setlist from Google Drive for Admin editing & overwrite
+  const handleLoadDriveSetlist = async (mssXml: string, fileName: string) => {
+    try {
+      let currentSongs = songs;
+      if (currentSongs.length === 0) {
+        const saved = await storage.getSongs();
+        if (saved && saved.length > 0) {
+          currentSongs = saved;
+          setSongs(saved);
+        } else {
+          const bundled = getBundledDatabaseSongs();
+          if (bundled.length > 0) {
+            currentSongs = bundled;
+            setSongs(bundled);
+          }
+        }
+      }
+
+      const result = importMssText(mssXml, currentSongs, fileName);
+      await handleApplyImport(result);
+      showSuccess(
+        `Setlist „${fileName}“ byl načten z Google Disku. Po úpravě jej můžete přes Export MSS na Disk přepsat.`,
+        'Načteno k opravě'
+      );
+    } catch (err: any) {
+      showError(err?.message || 'Nepodařilo se načíst setlist z Google Disku.', 'Chyba načtení');
+    }
+  };
+
   // 6. Manual Song Pairing handler (100% preserved)
   const handlePairSong = (tempId: number, targetMasterId: number) => {
     recordHistory('Spárování skladby');
@@ -1399,9 +1432,10 @@ function SetlistStudio() {
   const handleGenerateAndSave = async (
     overrideEventName?: string,
     overrideEventDate?: string,
-    options?: { confirmOverwrite?: boolean }
+    options?: { confirmOverwrite?: boolean; overrideToken?: string }
   ) => {
     const confirmOverwrite = options?.confirmOverwrite === true;
+    const overrideToken = options?.overrideToken;
     const nextEventName = typeof overrideEventName === 'string' ? overrideEventName : eventName;
     const nextEventDate = typeof overrideEventDate === 'string' ? overrideEventDate : eventDate;
     if (typeof overrideEventName === 'string') {
@@ -1511,7 +1545,7 @@ function SetlistStudio() {
 
         const res = await fetch('/api/drive/export', {
           method: 'POST',
-          headers: buildExportHeaders(),
+          headers: buildExportHeaders(overrideToken),
           body: JSON.stringify({
             fileName: mssFileName,
             mssXml,
@@ -1628,9 +1662,10 @@ function SetlistStudio() {
   const handleGenerateOsaList = async (
     overrideEventName?: string,
     overrideEventDate?: string,
-    options?: { confirmOverwrite?: boolean }
+    options?: { confirmOverwrite?: boolean; overrideToken?: string }
   ) => {
     const confirmOverwrite = options?.confirmOverwrite === true;
+    const overrideToken = options?.overrideToken;
     const rawEventName = typeof overrideEventName === 'string' ? overrideEventName : eventName;
     const nextEventDate = typeof overrideEventDate === 'string' ? overrideEventDate : eventDate;
     if (typeof overrideEventName === 'string') {
@@ -1688,7 +1723,7 @@ function SetlistStudio() {
 
         const res = await fetch('/api/drive/export', {
           method: 'POST',
-          headers: buildExportHeaders(),
+          headers: buildExportHeaders(overrideToken),
           body: JSON.stringify({
             fileName: fileBaseName,
             pdfBase64,
@@ -1769,6 +1804,34 @@ function SetlistStudio() {
     } finally {
       setIsExporting(false);
     }
+  };
+
+  // Re-verify Admin PIN inline when an older/offline Admin session lacks a verified server token
+  const handleReverifyAdminAndOverwrite = async (
+    pin: string,
+    kind: 'bundle' | 'osa'
+  ): Promise<{ success: boolean; error?: string }> => {
+    const res = await login(pin);
+    if (!res.success || res.role !== 'admin' || !res.token) {
+      return {
+        success: false,
+        error: res.error || 'Zadaný PIN nemá práva administrátora pro přepis souborů.',
+      };
+    }
+
+    if (kind === 'bundle') {
+      void handleGenerateAndSave(undefined, undefined, {
+        confirmOverwrite: true,
+        overrideToken: res.token,
+      });
+    } else {
+      void handleGenerateOsaList(undefined, undefined, {
+        confirmOverwrite: true,
+        overrideToken: res.token,
+      });
+    }
+
+    return { success: true };
   };
 
   return (
@@ -1927,6 +1990,7 @@ function SetlistStudio() {
           onTriggerSync={handleSyncDatabase}
           isSyncing={isSyncing}
           totalSongs={songs.length}
+          onLoadDriveSetlist={handleLoadDriveSetlist}
         />
       )}
 
@@ -1945,12 +2009,14 @@ function SetlistStudio() {
         isExporting={isExporting}
         exportProgress={exportProgress}
         driveStatus={driveExportStatus}
+        role={role || 'user'}
         onRenameAndRetry={(newName, newDate) =>
           handleGenerateAndSave(newName, newDate, { confirmOverwrite: false })
         }
         onConfirmOverwrite={() =>
           handleGenerateAndSave(undefined, undefined, { confirmOverwrite: true })
         }
+        onReverifyAdminAndOverwrite={(pin) => handleReverifyAdminAndOverwrite(pin, 'bundle')}
       />
 
       {/* OSA Export Modal (Drive-only export) */}
@@ -1964,6 +2030,8 @@ function SetlistStudio() {
         onConfirmOverwrite={() =>
           handleGenerateOsaList(undefined, undefined, { confirmOverwrite: true })
         }
+        onReverifyAdminAndOverwrite={(pin) => handleReverifyAdminAndOverwrite(pin, 'osa')}
+        role={role || 'user'}
         eventName={eventName}
         eventDate={eventDate}
         fileName={osaFileName}
