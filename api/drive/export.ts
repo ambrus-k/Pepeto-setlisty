@@ -10,13 +10,13 @@ type NextApiResponse = {
   json: (data: any) => void;
   setHeader: (name: string, value: string | string[]) => void;
 };
-import { exportToGoogleDrive } from '../../src/services/googleDriveServer.ts';
+import { exportToGoogleDrive, uploadPdfOnlyToGoogleDrive } from '../../src/services/googleDriveServer.ts';
 
 /**
  * Next.js API Route: /api/drive/export
  *
- * Receives the generated MobileSheets XML (.mss) string and optional PDF from the frontend,
- * and uses the Service Account credentials to upload it silently into the export folder on Google Drive.
+ * Receives the generated MobileSheets XML (.mss) string and optional PDF (or PDF-only OSA list) from the frontend,
+ * and uses the Drive credentials to upload it silently into the export folder on Google Drive.
  */
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method !== 'POST') {
@@ -25,7 +25,18 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   }
 
   try {
-    const { fileName, mssXml, pdfBase64 } = req.body || {};
+    const { fileName, mssXml, pdfBase64, pdfOnly } = req.body || {};
+
+    if (pdfOnly || (!mssXml && pdfBase64)) {
+      if (!pdfBase64) {
+        return res.status(400).json({
+          success: false,
+          error: 'Chybí povinný obsah souboru PDF (pdfBase64).',
+        });
+      }
+      const result = await uploadPdfOnlyToGoogleDrive(fileName || 'Seznam pro OSA', pdfBase64);
+      return res.status(result.success ? 200 : 500).json(result);
+    }
 
     if (!mssXml) {
       return res.status(400).json({

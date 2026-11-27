@@ -10,6 +10,7 @@ import {
   ArrowLeftRight,
   FolderOpen,
   ListOrdered,
+  ClipboardList,
 } from 'lucide-react';
 import { UserRole } from '../types';
 import { PWAInstallButton } from './PWAInstallButton';
@@ -20,6 +21,7 @@ interface HeaderProps {
   role: UserRole;
   onLogout: () => void;
   onGenerateAndSave: () => void;
+  onGenerateOsaList: () => void;
   onQuickDownloadPdf: () => void;
   onQuickDownloadMss: () => void;
   isExporting: boolean;
@@ -35,6 +37,7 @@ export const Header: React.FC<HeaderProps> = ({
   role,
   onLogout,
   onGenerateAndSave,
+  onGenerateOsaList,
   onQuickDownloadPdf,
   onQuickDownloadMss,
   isExporting,
@@ -230,6 +233,26 @@ export const Header: React.FC<HeaderProps> = ({
                       </div>
                       <div className="text-[0.6875rem] text-slate-500 dark:text-slate-400">
                         Uložit na Google Disk a zobrazit náhled
+                      </div>
+                    </div>
+                  </button>
+
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={() => {
+                      setIsIoMenuOpen(false);
+                      onGenerateOsaList();
+                    }}
+                    className="w-full flex items-start gap-2.5 px-3 py-2 text-left hover:bg-blue-50 dark:hover:bg-blue-950/60 transition cursor-pointer"
+                  >
+                    <ClipboardList className="w-4 h-4 text-blue-600 dark:text-blue-400 mt-0.5 shrink-0" />
+                    <div>
+                      <div className="text-xs font-bold text-slate-900 dark:text-white">
+                        Seznam pro OSA
+                      </div>
+                      <div className="text-[0.6875rem] text-slate-500 dark:text-slate-400">
+                        Uložit PDF pro OSA na Google Disk (export)
                       </div>
                     </div>
                   </button>

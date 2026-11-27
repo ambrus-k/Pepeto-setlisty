@@ -394,6 +394,303 @@ export async function generatePdf(
   return { doc, blob, dataUrl };
 }
 
+export interface OsaSongRow {
+  order: number;
+  songId: number;
+  title: string;
+  musicAuthor: string;
+  lyricsAuthor: string;
+  arranger: string;
+  isInstrumental: boolean;
+  hasAuthorInfo: boolean;
+}
+
+/**
+ * Strips stage-only annotations (saxophone tags, trailing file notes) from a song title for OSA reporting.
+ */
+export function stripStageAnnotationsForOsa(rawTitle: string): string {
+  if (!rawTitle) return '';
+  return rawTitle
+    .replace(/\s*[-–—_]+\s*(?:ALT|TENOR|SOPR[AÁ]N|BARYTON)\s*Sax\b.*$/i, '')
+    .replace(/\s*[_-]+\s*(?:alt|tenor|sopran|bariton)(?:\s*sax)?\b.*$/i, '')
+    .replace(/\s+(?:text|vocal|vok[aá]l)\s*$/i, '')
+    .replace(/\s*\.{3,}\s*$/g, '')
+    .replace(/\s*[-–—]+\s*$/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function cleanEventNameForOsa(eventName: string): string {
+  const stripped = (eventName || '')
+    .trim()
+    .replace(/\.(pdf|mss|xlsx|xls)$/i, '')
+    .replace(/^seznam pro osa\s*-\s*/i, '')
+    .replace(/[\\/:*?"<>|]/g, '-')
+    .replace(/\s+/g, ' ')
+    .trim();
+  return stripped || 'Setlist';
+}
+
+/**
+ * Builds the canonical OSA PDF base file name: "Seznam pro OSA - <název akce>".
+ * Preserves date dots (e.g. 13.02.2026) and only strips known file extensions.
+ */
+export function buildOsaFileBaseName(eventName: string): string {
+  return `Seznam pro OSA - ${cleanEventNameForOsa(eventName)}`;
+}
+
+/**
+ * Collects unique playable songs across all sets in playback order with OSA composer/lyricist metadata.
+ */
+export function buildOsaSongRows(
+  sets: SetlistGroup[],
+  songsMap: Map<number, Song>
+): OsaSongRow[] {
+  const rows: OsaSongRow[] = [];
+  const seenIds = new Set<number>();
+
+  for (const set of sets) {
+    for (const songId of set.songIds) {
+      if (seenIds.has(songId)) continue;
+      seenIds.add(songId);
+
+      const song = songsMap.get(songId);
+      const isUtility =
+        song?.isPlayableSong === false ||
+        songId === 998 ||
+        songId === 999 ||
+        /^0+\s+seznam$/i.test((song?.mss_title || '').trim());
+      if (isUtility) continue;
+
+      const fallbackRaw =
+        song?.pdf_title ||
+        song?.mss_title ||
+        (songId < 0 ? 'Neznámá skladba' : `Skladba #${songId}`);
+      const title =
+        song?.cleanTitle?.trim() ||
+        stripStageAnnotationsForOsa(cleanTitleForPdf(fallbackRaw, song?.id)) ||
+        fallbackRaw;
+
+      const isInstrumental =
+        song?.language === 'instrumental' ||
+        song?.vocalType === 'Instrumentální' ||
+        song?.lyricsAuthor === 'Instrumentální';
+
+      const hasAuthorInfo = Boolean(song?.musicAuthor && song.musicAuthor.trim().length > 0);
+      const musicAuthor = song?.musicAuthor?.trim() || song?.artist?.trim() || '—';
+      const lyricsAuthor = song?.lyricsAuthor?.trim() || (isInstrumental ? 'Instrumentální' : '—');
+      const arranger = song?.arranger?.trim() || '';
+
+      rows.push({
+        order: rows.length + 1,
+        songId,
+        title,
+        musicAuthor,
+        lyricsAuthor,
+        arranger,
+        isInstrumental,
+        hasAuthorInfo,
+      });
+    }
+  }
+
+  return rows;
+}
+
+/**
+ * Generates an official OSA-compliant A4 PDF ("Seznam pro OSA - <název akce>.pdf")
+ * matching OSA's "SEZNAM DĚL UŽITÝCH PŘI PRODUKCI (PLAYLIST)" structure.
+ */
+export async function generateOsaPdf(
+  eventName: string,
+  sets: SetlistGroup[],
+  songsMap: Map<number, Song>
+): Promise<{
+  doc: JsPdfType;
+  blob: Blob;
+  dataUrl: string;
+  rows: OsaSongRow[];
+  fileBaseName: string;
+  fileName: string;
+}> {
+  const doc = new JsPDFConstructor({
+    orientation: 'portrait',
+    unit: 'mm',
+    format: 'a4',
+  });
+
+  const pageWidth = doc.internal.pageSize.getWidth();
+  const pageHeight = doc.internal.pageSize.getHeight();
+  const marginX = 14;
+  const contentWidth = pageWidth - marginX * 2; // 182mm
+
+  doc.addFileToVFS('CzechFont-Bold.ttf', CZECH_FONT_BOLD_BASE64);
+  doc.addFont('CzechFont-Bold.ttf', 'CzechFont', 'bold');
+  doc.addFileToVFS('CzechFont-Regular.ttf', CZECH_FONT_REGULAR_BASE64);
+  doc.addFont('CzechFont-Regular.ttf', 'CzechFont', 'normal');
+
+  const fontName = 'CzechFont';
+  const cleanEvent = cleanEventNameForOsa(eventName);
+  const fileBaseName = buildOsaFileBaseName(eventName);
+  const fileName = `${fileBaseName}.pdf`;
+  const rows = buildOsaSongRows(sets, songsMap);
+  const generatedDate = new Date().toLocaleDateString('cs-CZ');
+
+  // 1. Dark-navy OSA header banner
+  doc.setFillColor(0, 32, 114);
+  doc.rect(marginX, 12, contentWidth, 17, 'F');
+
+  doc.setFont(fontName, 'bold');
+  doc.setFontSize(13);
+  doc.setTextColor(255, 255, 255);
+  doc.text('SEZNAM DĚL UŽITÝCH PŘI PRODUKCI (PLAYLIST)', marginX + 4, 19.5);
+
+  doc.setFont(fontName, 'normal');
+  doc.setFontSize(8.5);
+  doc.text('Příloha k žádosti o licenční smlouvu – OSA (Ochranný svaz autorský, z.s.)', marginX + 4, 25.5);
+
+  // 2. Metadata box
+  const metaTop = 32;
+  doc.setFont(fontName, 'normal');
+  doc.setFontSize(8.5);
+  const eventLines = doc.splitTextToSize(cleanEvent, 128) as string[];
+  const extraEventHeight = Math.max(0, eventLines.length - 1) * 4.2;
+  const metaHeight = 18 + extraEventHeight;
+
+  doc.setDrawColor(148, 163, 184);
+  doc.setLineWidth(0.3);
+  doc.setFillColor(248, 250, 252);
+  doc.rect(marginX, metaTop, contentWidth, metaHeight, 'FD');
+
+  doc.setTextColor(15, 23, 42);
+  doc.setFont(fontName, 'bold');
+  doc.text('Název akce / produkce:', marginX + 3, metaTop + 6);
+  doc.setFont(fontName, 'normal');
+  doc.text(eventLines, marginX + 44, metaTop + 6);
+
+  const row2Y = metaTop + 13 + extraEventHeight;
+  doc.setFont(fontName, 'bold');
+  doc.text('Účinkující / soubor:', marginX + 3, row2Y);
+  doc.setFont(fontName, 'normal');
+  doc.text('Hudební skupina PEPETO', marginX + 35, row2Y);
+
+  doc.setFont(fontName, 'bold');
+  doc.text('Počet užitých skladeb:', marginX + 82, row2Y);
+  doc.setFont(fontName, 'normal');
+  doc.text(String(rows.length), marginX + 118, row2Y);
+
+  doc.setFont(fontName, 'bold');
+  doc.text('Datum:', marginX + 133, row2Y);
+  doc.setFont(fontName, 'normal');
+  doc.text(generatedDate, marginX + 146, row2Y);
+
+  // 3. Official intro note
+  const noteY = metaTop + metaHeight + 5.5;
+  doc.setFont(fontName, 'normal');
+  doc.setFontSize(8);
+  doc.setTextColor(71, 85, 105);
+  doc.text(
+    'Seznam hudebních děl užitých při živé veřejné hudební produkci s uvedením autorů hudby a textu (určeno pro doložení v žádosti na www.osa.cz).',
+    marginX,
+    noteY
+  );
+
+  // 4. Song table
+  const tableBody = rows.map((r) => [
+    `${r.order}.`,
+    r.title,
+    r.musicAuthor,
+    r.lyricsAuthor,
+    r.arranger,
+  ]);
+
+  applyAutoTable(doc, {
+    startY: noteY + 3.5,
+    margin: { left: marginX, right: marginX, top: 18, bottom: 18 },
+    showHead: 'everyPage',
+    head: [['Č.', 'Název hudebního díla', 'Autor hudby', 'Autor textu', 'Zpracovatel']],
+    body: tableBody,
+    theme: 'grid',
+    styles: {
+      font: fontName,
+      fontStyle: 'normal',
+      fontSize: 8.5,
+      textColor: [15, 23, 42],
+      lineColor: [148, 163, 184],
+      lineWidth: 0.25,
+      cellPadding: { top: 2.2, bottom: 2.2, left: 2.5, right: 2.5 },
+      overflow: 'linebreak',
+      valign: 'middle',
+    },
+    headStyles: {
+      fillColor: [0, 32, 114],
+      textColor: [255, 255, 255],
+      fontStyle: 'bold',
+      fontSize: 8.5,
+      lineColor: [0, 32, 114],
+      lineWidth: 0.25,
+    },
+    alternateRowStyles: {
+      fillColor: [248, 250, 252],
+    },
+    columnStyles: {
+      0: { cellWidth: 11, halign: 'right' },
+      1: { cellWidth: 58, fontStyle: 'bold' },
+      2: { cellWidth: 45 },
+      3: { cellWidth: 43 },
+      4: { cellWidth: 25 },
+    },
+  });
+
+  // 5. Confirmation / signature block
+  let finalY = (doc as any).lastAutoTable?.finalY ?? 240;
+  if (finalY > pageHeight - 40) {
+    doc.addPage();
+    finalY = 24;
+  }
+
+  const sigTop = finalY + 6;
+  doc.setDrawColor(148, 163, 184);
+  doc.setLineWidth(0.3);
+  doc.setFillColor(255, 255, 255);
+  doc.rect(marginX, sigTop, contentWidth, 22, 'FD');
+
+  doc.setFont(fontName, 'bold');
+  doc.setFontSize(8.5);
+  doc.setTextColor(15, 23, 42);
+  doc.text('Potvrzení vedoucího hudebního souboru / odpovědné osoby (dle pokynů OSA):', marginX + 3, sigTop + 6);
+
+  doc.setFont(fontName, 'normal');
+  doc.setFontSize(8.5);
+  doc.text('V ............................................. dne .................................', marginX + 3, sigTop + 17);
+
+  doc.text('................................................................', pageWidth - marginX - 3, sigTop + 15, { align: 'right' });
+  doc.setFontSize(7.5);
+  doc.setTextColor(71, 85, 105);
+  doc.text('Hudební skupina PEPETO – odpovědná osoba', pageWidth - marginX - 3, sigTop + 19.5, { align: 'right' });
+
+  // 6. Page footers across all pages
+  const totalPages = doc.getNumberOfPages();
+  for (let p = 1; p <= totalPages; p++) {
+    doc.setPage(p);
+    doc.setDrawColor(203, 213, 225);
+    doc.setLineWidth(0.25);
+    doc.line(marginX, pageHeight - 13, pageWidth - marginX, pageHeight - 13);
+
+    doc.setFont(fontName, 'normal');
+    doc.setFontSize(7.5);
+    doc.setTextColor(71, 85, 105);
+    doc.text(fileBaseName, marginX, pageHeight - 8);
+    doc.text('Hudební skupina PEPETO', pageWidth / 2, pageHeight - 8, { align: 'center' });
+    doc.text(`Strana ${p} / ${totalPages}`, pageWidth - marginX, pageHeight - 8, { align: 'right' });
+  }
+
+  const blob = doc.output('blob');
+  const dataUrl = doc.output('datauristring');
+
+  return { doc, blob, dataUrl, rows, fileBaseName, fileName };
+}
+
 /**
  * Triggers browser file download
  */

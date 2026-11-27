@@ -1063,35 +1063,8 @@ export async function exportToGoogleDrive(
     // 4. If PDF Base64 is also supplied, upload PDF file too
     if (pdfBase64) {
       try {
-        const existingPdf = await searchDrive(`'${targetFolderId}' in parents and name = '${pdfTargetName.replace(/'/g, "\\'")}' and trashed = false`, token);
-        const existingPdfId = existingPdf.length > 0 ? existingPdf[0].id : null;
-
-        const pdfBuffer = Buffer.from(pdfBase64.replace(/^data:application\/pdf;base64,/, ''), 'base64');
-        const pdfMetadata = existingPdfId ? { name: pdfTargetName } : { name: pdfTargetName, parents: [targetFolderId] };
-
-        const pdfBoundary = '-------PdfBoundary' + Math.random().toString(36).substring(2);
-        const metaPart = Buffer.from(`--${pdfBoundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify(pdfMetadata)}\r\n--${pdfBoundary}\r\nContent-Type: application/pdf\r\n\r\n`);
-        const closePart = Buffer.from(`\r\n--${pdfBoundary}--`);
-
-        const multipartPdf = Buffer.concat([metaPart, pdfBuffer, closePart]);
-
-        const pdfEndpoint = existingPdfId
-          ? `https://www.googleapis.com/upload/drive/v3/files/${existingPdfId}?uploadType=multipart&supportsAllDrives=true`
-          : 'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&supportsAllDrives=true';
-
-        const pdfRes = await fetch(pdfEndpoint, {
-          method: existingPdfId ? 'PATCH' : 'POST',
-          headers: {
-            Authorization: `Bearer ${token}`,
-            'Content-Type': `multipart/related; boundary=${pdfBoundary}`,
-          },
-          body: multipartPdf,
-        });
-
-        if (pdfRes.ok) {
-          const pdfJson = await pdfRes.json();
-          pdfFileId = pdfJson.id;
-        }
+        const pdfUpload = await uploadPdfToDriveFolder(targetFolderId, pdfTargetName, pdfBase64, token);
+        pdfFileId = pdfUpload.pdfFileId;
       } catch (pdfErr) {
         console.warn('PDF upload warning:', pdfErr);
       }
@@ -1114,6 +1087,140 @@ export async function exportToGoogleDrive(
       success: false,
       fileName: mssTargetName,
       message: `Chyba při ukládání na Google Disk: ${err.message}`,
+    };
+  }
+}
+
+async function uploadPdfToDriveFolder(
+  targetFolderId: string,
+  pdfTargetName: string,
+  pdfBase64: string,
+  token: string
+): Promise<{ pdfFileId?: string; updatedExisting: boolean; statusCode: number; errorText?: string }> {
+  const escapedName = pdfTargetName.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+  const existingPdf = await searchDrive(
+    `'${targetFolderId}' in parents and name = '${escapedName}' and trashed = false`,
+    token
+  );
+  const existingPdfId = existingPdf.length > 0 ? existingPdf[0].id : null;
+
+  const pdfBuffer = Buffer.from(pdfBase64.replace(/^data:application\/pdf;base64,/, ''), 'base64');
+  const pdfMetadata = existingPdfId
+    ? { name: pdfTargetName }
+    : { name: pdfTargetName, parents: [targetFolderId] };
+
+  const pdfBoundary = '-------PdfBoundary' + Math.random().toString(36).substring(2);
+  const metaPart = Buffer.from(
+    `--${pdfBoundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify(pdfMetadata)}\r\n--${pdfBoundary}\r\nContent-Type: application/pdf\r\n\r\n`
+  );
+  const closePart = Buffer.from(`\r\n--${pdfBoundary}--`);
+  const multipartPdf = Buffer.concat([metaPart, pdfBuffer, closePart]);
+
+  const pdfEndpoint = existingPdfId
+    ? `https://www.googleapis.com/upload/drive/v3/files/${existingPdfId}?uploadType=multipart&supportsAllDrives=true`
+    : 'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&supportsAllDrives=true';
+
+  const pdfRes = await fetch(pdfEndpoint, {
+    method: existingPdfId ? 'PATCH' : 'POST',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': `multipart/related; boundary=${pdfBoundary}`,
+    },
+    body: multipartPdf,
+  });
+
+  if (!pdfRes.ok) {
+    return {
+      updatedExisting: Boolean(existingPdfId),
+      statusCode: pdfRes.status,
+      errorText: await pdfRes.text(),
+    };
+  }
+
+  const pdfJson = await pdfRes.json();
+  return {
+    pdfFileId: pdfJson.id,
+    updatedExisting: Boolean(existingPdfId),
+    statusCode: pdfRes.status,
+  };
+}
+
+/**
+ * Uploads a PDF-only file (e.g. "Seznam pro OSA - <název akce>.pdf") exclusively
+ * into the configured Google Drive Export folder (Play listy MobileSheets_export).
+ */
+export async function uploadPdfOnlyToGoogleDrive(
+  fileName: string,
+  pdfBase64: string
+): Promise<{
+  success: boolean;
+  pdfFileId?: string;
+  fileName: string;
+  folderId?: string;
+  updatedExisting?: boolean;
+  message: string;
+}> {
+  const auth = getGoogleAuthClient();
+  const { exportFolderId } = getActiveFolderIds();
+  const safeBase = fileName.trim().replace(/\.pdf$/i, '') || 'Seznam pro OSA';
+  const pdfTargetName = `${safeBase}.pdf`;
+
+  if (!auth) {
+    const errMsg =
+      'Google Drive přihlášení není na serveru nakonfigurováno. Seznam pro OSA nelze uložit na Google Disk.';
+    addLog('error', 'OSA_EXPORT_AUTH_MISSING', `${pdfTargetName}: ${errMsg}`);
+    return {
+      success: false,
+      fileName: pdfTargetName,
+      message: errMsg,
+    };
+  }
+
+  if (!pdfBase64 || !pdfBase64.trim()) {
+    return {
+      success: false,
+      fileName: pdfTargetName,
+      message: 'Chybí obsah vygenerovaného PDF souboru.',
+    };
+  }
+
+  try {
+    addLog(
+      'info',
+      'OSA_EXPORT_START',
+      `Ukládám OSA PDF "${pdfTargetName}" do složky Play listy MobileSheets_export...`
+    );
+    const token = await getDriveAccessToken();
+    const targetFolderId = exportFolderId || PERMANENT_EXPORT_FOLDER_ID;
+
+    const uploadRes = await uploadPdfToDriveFolder(targetFolderId, pdfTargetName, pdfBase64, token);
+    if (!uploadRes.pdfFileId) {
+      throw new Error(
+        `Chyba při nahrávání PDF na Google Disk (${uploadRes.statusCode}): ${uploadRes.errorText || 'Neznámá chyba'}`
+      );
+    }
+
+    lastExportedAt = Date.now();
+    addLog(
+      'success',
+      'OSA_EXPORT_SUCCESS',
+      `Seznam pro OSA "${pdfTargetName}" byl úspěšně uložen na Google Disk (ID: ${uploadRes.pdfFileId}, složka: ${targetFolderId}).`
+    );
+
+    return {
+      success: true,
+      pdfFileId: uploadRes.pdfFileId,
+      fileName: pdfTargetName,
+      folderId: targetFolderId,
+      updatedExisting: uploadRes.updatedExisting,
+      message: `Seznam pro OSA „${pdfTargetName}“ byl úspěšně uložen na Google Disk do složky Play listy MobileSheets_export.`,
+    };
+  } catch (err: any) {
+    addLog('error', 'OSA_EXPORT_ERROR', `Chyba při exportu seznamu pro OSA na Disk: ${err.message}`);
+    return {
+      success: false,
+      fileName: pdfTargetName,
+      message: `Chyba při ukládání seznamu pro OSA na Google Disk: ${err.message}`,
     };
   }
 }

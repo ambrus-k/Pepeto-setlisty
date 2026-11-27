@@ -4,6 +4,7 @@ import dotenv from 'dotenv';
 import {
   syncMasterSongsFromDrive,
   exportToGoogleDrive,
+  uploadPdfOnlyToGoogleDrive,
   getServerDriveStatus,
   getAdminLogs,
   saveFolderSettings,
@@ -70,7 +71,18 @@ app.get('/api/drive/sync', async (req: Request, res: Response) => {
 // 3. Google Drive Export endpoint
 app.post('/api/drive/export', async (req: Request, res: Response) => {
   try {
-    const { fileName, mssXml, pdfBase64 } = req.body;
+    const { fileName, mssXml, pdfBase64, pdfOnly } = req.body || {};
+
+    if (pdfOnly || (!mssXml && pdfBase64)) {
+      if (!pdfBase64) {
+        return res.status(400).json({
+          success: false,
+          error: 'Chybí povinný obsah souboru PDF (pdfBase64).',
+        });
+      }
+      const result = await uploadPdfOnlyToGoogleDrive(fileName || 'Seznam pro OSA', pdfBase64);
+      return res.status(result.success ? 200 : 500).json(result);
+    }
 
     if (!mssXml) {
       return res.status(400).json({

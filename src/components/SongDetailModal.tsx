@@ -196,6 +196,24 @@ export const SongDetailModal: React.FC<SongDetailModalProps> = ({
                   <span className="font-semibold text-slate-200">{song.originalArtist}</span>
                 </div>
               )}
+              {(song.musicAuthor || song.lyricsAuthor || song.arranger) && (
+                <>
+                  <div>
+                    <span className="text-slate-400 block">Autor hudby (OSA)</span>
+                    <span className="font-semibold text-slate-200">{song.musicAuthor || '—'}</span>
+                  </div>
+                  <div>
+                    <span className="text-slate-400 block">Autor textu (OSA)</span>
+                    <span className="font-semibold text-slate-200">{song.lyricsAuthor || '—'}</span>
+                  </div>
+                  {song.arranger && (
+                    <div>
+                      <span className="text-slate-400 block">Zpracovatel (OSA)</span>
+                      <span className="font-semibold text-slate-200">{song.arranger}</span>
+                    </div>
+                  )}
+                </>
+              )}
               <div>
                 <span className="text-slate-400 block">Rok / Jazyk</span>
                 <span className="font-semibold text-slate-200">

@@ -1,7 +1,15 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { Song, SetlistGroup, EventProject } from './types';
 import { storage } from './services/storage';
-import { generateMssXml, generatePdf, downloadFile } from './services/exportGenerator';
+import {
+  generateMssXml,
+  generatePdf,
+  downloadFile,
+  generateOsaPdf,
+  buildOsaSongRows,
+  buildOsaFileBaseName,
+  OsaSongRow,
+} from './services/exportGenerator';
 import { useOnlineStatus } from './hooks/useOnlineStatus';
 import { useAuth } from './context/AuthContext';
 import { LoginScreen } from './components/LoginScreen';
@@ -10,6 +18,7 @@ import { SetTabs, PaneSide } from './components/SetTabs';
 import { CommanderToolbar } from './components/CommanderToolbar';
 import { CommanderPane, PaneDisplayRow } from './components/CommanderPane';
 import { ExportModal, ExportProgressState } from './components/ExportModal';
+import { OsaExportModal, OsaDriveStatus } from './components/OsaExportModal';
 import { AdminPanelModal } from './components/AdminPanelModal';
 import { OfflineIndicator } from './components/OfflineIndicator';
 import { ToastProvider, useToast } from './components/Toast';
@@ -290,6 +299,12 @@ function SetlistStudio() {
     state: 'idle' | 'uploading' | 'success' | 'offline_queued' | 'error';
     message?: string;
   }>({ state: 'idle' });
+
+  // OSA export state (uploads exclusively to Google Drive export folder)
+  const [isOsaExportOpen, setIsOsaExportOpen] = useState<boolean>(false);
+  const [osaExportRows, setOsaExportRows] = useState<OsaSongRow[]>([]);
+  const [osaFileName, setOsaFileName] = useState<string>('');
+  const [osaDriveStatus, setOsaDriveStatus] = useState<OsaDriveStatus>({ state: 'idle' });
 
   // Map of songs by ID for fast lookup
   const songsMap = useMemo(() => {
@@ -581,6 +596,25 @@ function SetlistStudio() {
           try {
             if (item.fileType === 'pdf') {
               await storage.removePendingUpload(item.id);
+              continue;
+            }
+
+            if (item.fileType === 'osa-pdf') {
+              const pdfBase64 = await blobToDataUrl(item.blobData);
+              const res = await fetch('/api/drive/export', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  fileName: item.fileName,
+                  pdfBase64,
+                  pdfOnly: true,
+                  eventName: item.eventName,
+                }),
+              });
+              if (res.ok) {
+                await storage.removePendingUpload(item.id);
+                syncedCount++;
+              }
               continue;
             }
 
@@ -1137,6 +1171,7 @@ function SetlistStudio() {
   const anyModalOpen =
     isAdminPanelOpen ||
     isExportOpen ||
+    isOsaExportOpen ||
     isImportModalOpen ||
     isDisplaySettingsOpen ||
     isSetlistManagerOpen ||
@@ -1453,6 +1488,107 @@ function SetlistStudio() {
     downloadFile(xml, `${safeName}.mss`, 'text/xml');
   };
 
+  // 8. OSA Playlist PDF Export (exclusively to Google Drive export folder)
+  const handleGenerateOsaList = async () => {
+    const trimmedEvent = eventName.trim();
+    if (!trimmedEvent) {
+      showWarning(
+        'Nejprve vyplňte název akce (pole Setlist v horní liště), aby se soubor pojmenoval „Seznam pro OSA - název akce“.',
+        'Chybí název akce'
+      );
+      document.getElementById('eventNameInput')?.focus();
+      return;
+    }
+
+    const previewRows = buildOsaSongRows(sets, songsMap);
+    if (previewRows.length === 0) {
+      showWarning(
+        'Aktuální setlist neobsahuje žádné skladby pro vygenerování seznamu pro OSA.',
+        'Prázdný setlist'
+      );
+      return;
+    }
+
+    const targetBaseName = buildOsaFileBaseName(trimmedEvent);
+    setIsExporting(true);
+    setOsaExportRows(previewRows);
+    setOsaFileName(`${targetBaseName}.pdf`);
+    setIsOsaExportOpen(true);
+    setOsaDriveStatus({ state: 'generating' });
+
+    try {
+      const { blob, fileBaseName, fileName, rows } = await generateOsaPdf(
+        trimmedEvent,
+        sets,
+        songsMap
+      );
+      setOsaExportRows(rows);
+      setOsaFileName(fileName);
+
+      if (isOnline) {
+        setOsaDriveStatus({ state: 'uploading' });
+
+        const pdfBase64 = await new Promise<string>((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onloadend = () => resolve(String(reader.result || ''));
+          reader.onerror = () => reject(reader.error || new Error('Nepodařilo se načíst PDF data.'));
+          reader.readAsDataURL(blob);
+        });
+
+        const res = await fetch('/api/drive/export', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            fileName: fileBaseName,
+            pdfBase64,
+            pdfOnly: true,
+            eventName: trimmedEvent,
+          }),
+        });
+
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok || data.success === false) {
+          throw new Error(
+            data.error ||
+              data.message ||
+              'Server vrátil chybu při ukládání seznamu pro OSA na Google Disk.'
+          );
+        }
+
+        setOsaDriveStatus({
+          state: 'success',
+          message: data.message,
+          updatedExisting: data.updatedExisting,
+        });
+        showSuccess(`Seznam „${fileName}“ byl uložen na Google Disk.`, 'OSA seznam uložen');
+      } else {
+        await storage.addPendingUpload({
+          id: `upload-${Date.now()}-osa`,
+          eventName: trimmedEvent,
+          fileName: fileBaseName,
+          fileType: 'osa-pdf',
+          blobData: blob,
+          createdAt: Date.now(),
+          status: 'pending',
+        });
+
+        setOsaDriveStatus({
+          state: 'offline_queued',
+          message:
+            'Jste offline. Seznam pro OSA byl zařazen do fronty a automaticky se uloží do složky Play listy MobileSheets_export po obnovení připojení.',
+        });
+      }
+    } catch (err: any) {
+      console.error('OSA export failed:', err);
+      setOsaDriveStatus({
+        state: 'error',
+        message: err?.message || 'Chyba při ukládání seznamu pro OSA na Google Disk.',
+      });
+    } finally {
+      setIsExporting(false);
+    }
+  };
+
   return (
     <div className="tc-app-shell bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 flex flex-col font-sans selection:bg-indigo-500/30 selection:text-indigo-900 dark:selection:text-indigo-200 transition-colors">
       {/* Row 1: Compact Header (Logo + Setlist Name + Upravit sety + Combined Import/Export + Settings + Logout) */}
@@ -1462,6 +1598,7 @@ function SetlistStudio() {
         role={role || 'user'}
         onLogout={logout}
         onGenerateAndSave={handleGenerateAndSave}
+        onGenerateOsaList={handleGenerateOsaList}
         onQuickDownloadPdf={handleQuickDownloadPdf}
         onQuickDownloadMss={handleQuickDownloadMss}
         isExporting={isExporting}
@@ -1622,6 +1759,17 @@ function SetlistStudio() {
         isExporting={isExporting}
         exportProgress={exportProgress}
         driveStatus={driveExportStatus}
+      />
+
+      {/* OSA Export Modal (Drive-only export) */}
+      <OsaExportModal
+        isOpen={isOsaExportOpen}
+        onClose={() => setIsOsaExportOpen(false)}
+        onRetryUpload={handleGenerateOsaList}
+        eventName={eventName}
+        fileName={osaFileName}
+        rows={osaExportRows}
+        status={osaDriveStatus}
       />
 
       {/* Import Setlist Modal */}

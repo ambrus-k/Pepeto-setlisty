@@ -57,6 +57,9 @@ export interface Song {
   audienceAppeal?: string | null;
   aiDescription?: string | null;
   verifiedSource?: string | null;
+  musicAuthor?: string | null;
+  lyricsAuthor?: string | null;
+  arranger?: string | null;
   pepeto?: PepetoSongMeta;
   labelsCs?: PepetoSongLabelsCs;
 }
@@ -106,7 +109,7 @@ export interface PendingUpload {
   id: string;
   eventName: string;
   fileName: string;
-  fileType: 'pdf' | 'mss' | 'bundle';
+  fileType: 'pdf' | 'mss' | 'bundle' | 'osa-pdf';
   blobData: Blob;
   pdfBlobData?: Blob;
   createdAt: number;
