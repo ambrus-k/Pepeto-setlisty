@@ -37,6 +37,7 @@ import {
   normalizeHexColor,
 } from './parser.ts';
 import { parseExcelAllStyles } from './excelStyleParser.ts';
+import { resolveEventYear, type EventYearSource } from '../utils/eventMetadata.ts';
 
 // In-memory admin logs (last 50 events)
 const adminLogs: AdminLogEntry[] = [
@@ -81,7 +82,14 @@ const SETTINGS_FILE = process.env.VERCEL
   ? path.join('/tmp', '.drive-settings.json')
   : path.resolve(process.cwd(), '.drive-settings.json');
 
-function loadPersistedFolderSettings(): { dataFolderId?: string; exportFolderId?: string } {
+interface PersistedFolderSettings {
+  rootFolderId?: string;
+  dataFolderId?: string;
+  osaFolderId?: string;
+  exportFolderId?: string;
+}
+
+function loadPersistedFolderSettings(): PersistedFolderSettings {
   try {
     if (fs.existsSync(SETTINGS_FILE)) {
       const raw = fs.readFileSync(SETTINGS_FILE, 'utf-8');
@@ -93,7 +101,7 @@ function loadPersistedFolderSettings(): { dataFolderId?: string; exportFolderId?
   return {};
 }
 
-function savePersistedFolderSettings(settings: { dataFolderId?: string; exportFolderId?: string }) {
+function savePersistedFolderSettings(settings: PersistedFolderSettings) {
   try {
     fs.writeFileSync(SETTINGS_FILE, JSON.stringify(settings, null, 2), 'utf-8');
   } catch (e) {
@@ -101,9 +109,20 @@ function savePersistedFolderSettings(settings: { dataFolderId?: string; exportFo
   }
 }
 
-// Permanent default Google Drive folder IDs for Pepeto band
-export const PERMANENT_DATA_FOLDER_ID = '1pZuDqPX6OVbGoYdfOg_p3DqJ0cEhAiq2';
-export const PERMANENT_EXPORT_FOLDER_ID = '1gvZxnQDDdQtIMGO7-ai877tdZcYysfs-';
+// Permanent default Google Drive folder IDs for Pepeto band ("Playlisty" hierarchy)
+export const PERMANENT_ROOT_FOLDER_ID = '148l9d_0G8INqEVa6RZa_Lo8vyH5RrUqJ'; // Playlisty
+export const PERMANENT_DATA_FOLDER_ID = '1pZuDqPX6OVbGoYdfOg_p3DqJ0cEhAiq2'; // Play listy MobileSheets_data
+export const PERMANENT_OSA_FOLDER_ID = '1t-ZPYsLBE8RxsOk4hA8H8x0mmPyfyyR6'; // Osa seznam
+export const PERMANENT_EXPORT_FOLDER_ID = PERMANENT_ROOT_FOLDER_ID; // Legacy alias pointing to Playlisty root
+
+export const PERMANENT_YEAR_FOLDER_IDS: Record<number, string> = {
+  2024: '1V2WbfFLKaB91W-DkowqVUTKFhFuDsOkp',
+  2025: '1nINytoukUs_7rfeRGxaEtYTxQTvU9Zej',
+  2026: '1JyJjA2QcmrRuOOHUOfP-h3wcQUOcpMZE',
+  2027: '1kMezB4Azw-L_4nGC7I7jrfA6RVM6FdRo',
+  2028: '1Jr3J6FzZsPsmAmbNlkL_usmitzlMHXD3',
+  2029: '1UwG5zLUzeYDDqVrk7YzbVShHoZwaynKe',
+};
 
 // Default OAuth2 credentials read from environment variables (.env / Vercel Environment Variables)
 export const PERMANENT_CLIENT_ID = process.env.GOOGLE_CLIENT_ID || '';
@@ -128,25 +147,89 @@ export function extractFolderId(input?: string): string {
  * Returns current active folder IDs (persisted in JSON, from .env, or permanent defaults)
  * Always guarantees valid permanent IDs for Vercel and Android deployments.
  */
-export function getActiveFolderIds(): { dataFolderId: string; exportFolderId: string } {
+export function getActiveFolderIds(): {
+  rootFolderId: string;
+  dataFolderId: string;
+  osaFolderId: string;
+  exportFolderId: string;
+} {
   const persisted = loadPersistedFolderSettings();
-  const data = persisted.dataFolderId || (process.env.DRIVE_DATA_FOLDER_ID || process.env.GOOGLE_DRIVE_DATA_FOLDER_ID || PERMANENT_DATA_FOLDER_ID).trim();
-  const exportF = persisted.exportFolderId || (process.env.DRIVE_EXPORT_FOLDER_ID || process.env.GOOGLE_DRIVE_EXPORT_FOLDER_ID || PERMANENT_EXPORT_FOLDER_ID).trim();
+  const root = (
+    persisted.rootFolderId ||
+    process.env.DRIVE_ROOT_FOLDER_ID ||
+    process.env.GOOGLE_DRIVE_ROOT_FOLDER_ID ||
+    PERMANENT_ROOT_FOLDER_ID
+  ).trim();
+  const data = (
+    persisted.dataFolderId ||
+    process.env.DRIVE_DATA_FOLDER_ID ||
+    process.env.GOOGLE_DRIVE_DATA_FOLDER_ID ||
+    PERMANENT_DATA_FOLDER_ID
+  ).trim();
+  const osa = (
+    persisted.osaFolderId ||
+    process.env.DRIVE_OSA_FOLDER_ID ||
+    process.env.GOOGLE_DRIVE_OSA_FOLDER_ID ||
+    PERMANENT_OSA_FOLDER_ID
+  ).trim();
+
+  const resolvedRoot = extractFolderId(root) || PERMANENT_ROOT_FOLDER_ID;
+  const resolvedData = extractFolderId(data) || PERMANENT_DATA_FOLDER_ID;
+  const resolvedOsa = extractFolderId(osa) || PERMANENT_OSA_FOLDER_ID;
+
   return {
-    dataFolderId: extractFolderId(data) || PERMANENT_DATA_FOLDER_ID,
-    exportFolderId: extractFolderId(exportF) || PERMANENT_EXPORT_FOLDER_ID,
+    rootFolderId: resolvedRoot,
+    dataFolderId: resolvedData,
+    osaFolderId: resolvedOsa,
+    exportFolderId: resolvedRoot,
   };
 }
 
 /**
  * Saves updated folder IDs configured in the Admin UI
  */
-export function saveFolderSettings(dataFolderInput: string, exportFolderInput: string): { dataFolderId: string; exportFolderId: string } {
-  const cleanData = extractFolderId(dataFolderInput) || PERMANENT_DATA_FOLDER_ID;
-  const cleanExport = extractFolderId(exportFolderInput) || PERMANENT_EXPORT_FOLDER_ID;
-  savePersistedFolderSettings({ dataFolderId: cleanData, exportFolderId: cleanExport });
-  addLog('info', 'FOLDERS_UPDATED', `Složky Disku aktualizovány v nastavení: Data=${cleanData}, Export=${cleanExport}`);
-  return { dataFolderId: cleanData, exportFolderId: cleanExport };
+export function saveFolderSettings(
+  inputOrDataFolder:
+    | string
+    | { rootFolderId?: string; dataFolderId?: string; osaFolderId?: string; exportFolderId?: string },
+  legacyExportFolder?: string
+): {
+  rootFolderId: string;
+  dataFolderId: string;
+  osaFolderId: string;
+  exportFolderId: string;
+} {
+  const isObj = typeof inputOrDataFolder === 'object' && inputOrDataFolder !== null;
+  const rawRoot = isObj
+    ? inputOrDataFolder.rootFolderId ?? inputOrDataFolder.exportFolderId
+    : legacyExportFolder;
+  const rawData = isObj ? inputOrDataFolder.dataFolderId : inputOrDataFolder;
+  const rawOsa = isObj ? inputOrDataFolder.osaFolderId : undefined;
+
+  const current = getActiveFolderIds();
+  const cleanRoot =
+    rawRoot !== undefined ? extractFolderId(rawRoot) || PERMANENT_ROOT_FOLDER_ID : current.rootFolderId;
+  const cleanData =
+    rawData !== undefined ? extractFolderId(rawData) || PERMANENT_DATA_FOLDER_ID : current.dataFolderId;
+  const cleanOsa =
+    rawOsa !== undefined ? extractFolderId(rawOsa) || PERMANENT_OSA_FOLDER_ID : current.osaFolderId;
+
+  savePersistedFolderSettings({
+    rootFolderId: cleanRoot,
+    dataFolderId: cleanData,
+    osaFolderId: cleanOsa,
+  });
+  addLog(
+    'info',
+    'FOLDERS_UPDATED',
+    `Složky Disku aktualizovány v nastavení: Playlisty=${cleanRoot}, Data=${cleanData}, OSA=${cleanOsa}`
+  );
+  return {
+    rootFolderId: cleanRoot,
+    dataFolderId: cleanData,
+    osaFolderId: cleanOsa,
+    exportFolderId: cleanRoot,
+  };
 }
 
 // Žádná vzorová / demo data. Skladby se načítají výhradně synchronizací ze souboru .mss na Google Disku.
@@ -320,6 +403,154 @@ async function listFilesInFolder(folderId: string, token: string): Promise<any[]
   }
 
   return files;
+}
+
+/**
+ * Lists all non-trashed subfolders inside a Google Drive parent folder.
+ */
+async function listSubfoldersInFolder(parentFolderId: string, token: string): Promise<any[]> {
+  const folders: any[] = [];
+  let pageToken: string | undefined;
+
+  for (let page = 0; page < 10; page++) {
+    const url = new URL('https://www.googleapis.com/drive/v3/files');
+    url.searchParams.set(
+      'q',
+      `'${parentFolderId}' in parents and mimeType = 'application/vnd.google-apps.folder' and trashed = false`
+    );
+    url.searchParams.set('fields', 'nextPageToken,files(id,name,mimeType,modifiedTime)');
+    url.searchParams.set('pageSize', '200');
+    url.searchParams.set('supportsAllDrives', 'true');
+    url.searchParams.set('includeItemsFromAllDrives', 'true');
+    if (pageToken) {
+      url.searchParams.set('pageToken', pageToken);
+    }
+
+    const res = await fetch(url.toString(), {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+
+    if (!res.ok) {
+      throw await buildDriveApiError(res);
+    }
+
+    const data = await res.json();
+    if (Array.isArray(data.files)) {
+      folders.push(...data.files);
+    }
+
+    pageToken = typeof data.nextPageToken === 'string' && data.nextPageToken ? data.nextPageToken : undefined;
+    if (!pageToken) {
+      break;
+    }
+  }
+
+  return folders;
+}
+
+/**
+ * Resolves the target yearly playlist folder (e.g. "Playlisty 2027") inside the root "Playlisty" folder.
+ */
+async function resolveYearlyPlaylistFolder(
+  year: number,
+  token: string
+): Promise<{ folderId: string; folderName: string; availableYears: string[] }> {
+  const envOverride = (
+    process.env[`GOOGLE_DRIVE_YEAR_${year}_FOLDER_ID`] ||
+    process.env[`DRIVE_YEAR_${year}_FOLDER_ID`] ||
+    ''
+  ).trim();
+  if (envOverride) {
+    return {
+      folderId: extractFolderId(envOverride),
+      folderName: `Playlisty ${year}`,
+      availableYears: [`Playlisty ${year}`],
+    };
+  }
+
+  const { rootFolderId } = getActiveFolderIds();
+  const discoveredByYear = new Map<number, { id: string; name: string }>();
+
+  try {
+    const subfolders = await listSubfoldersInFolder(rootFolderId, token);
+    for (const folder of subfolders) {
+      const match = String(folder.name || '')
+        .trim()
+        .match(/^play\s*list[ys]?\s*[-_]?\s*(\d{4})$/i);
+      if (match) {
+        const parsedYear = parseInt(match[1], 10);
+        if (!discoveredByYear.has(parsedYear)) {
+          discoveredByYear.set(parsedYear, { id: folder.id, name: folder.name });
+        }
+      }
+    }
+  } catch (err) {
+    console.warn(`Could not list subfolders of root Playlisty (${rootFolderId}):`, err);
+  }
+
+  const availableYears = Array.from(discoveredByYear.entries())
+    .sort((a, b) => a[0] - b[0])
+    .map(([, info]) => info.name);
+
+  const matched = discoveredByYear.get(year);
+  if (matched) {
+    return {
+      folderId: matched.id,
+      folderName: matched.name,
+      availableYears,
+    };
+  }
+
+  const permanentFallbackId = PERMANENT_YEAR_FOLDER_IDS[year];
+  if (permanentFallbackId) {
+    const fallbackNames =
+      availableYears.length > 0
+        ? availableYears
+        : Object.keys(PERMANENT_YEAR_FOLDER_IDS).map((y) => `Playlisty ${y}`);
+    return {
+      folderId: permanentFallbackId,
+      folderName: `Playlisty ${year}`,
+      availableYears: fallbackNames,
+    };
+  }
+
+  throw new Error(
+    `Na Google Disku ve složce Playlisty nebyla nalezena složka „Playlisty ${year}“. ` +
+      `Dostupné roční složky: ${availableYears.length > 0 ? availableYears.join(', ') : 'žádné'}. ` +
+      `Vytvořte prosím ve složce Playlisty podsložku „Playlisty ${year}“ (oprávnění Editor se zdědí automaticky).`
+  );
+}
+
+/**
+ * Resolves the "Osa seznam" folder inside the root "Playlisty" folder.
+ */
+async function resolveOsaFolder(token: string): Promise<{ folderId: string; folderName: string }> {
+  const { rootFolderId, osaFolderId } = getActiveFolderIds();
+  const isCustomOsaOverride = Boolean(osaFolderId && osaFolderId !== PERMANENT_OSA_FOLDER_ID);
+
+  if (isCustomOsaOverride) {
+    return { folderId: osaFolderId, folderName: 'Osa seznam' };
+  }
+
+  try {
+    const subfolders = await listSubfoldersInFolder(rootFolderId, token);
+    const osaMatch = subfolders.find((f) =>
+      /^osa\s*[-_]?\s*seznam$/i.test(String(f.name || '').trim())
+    );
+    if (osaMatch?.id) {
+      return {
+        folderId: osaMatch.id,
+        folderName: osaMatch.name || 'Osa seznam',
+      };
+    }
+  } catch (err) {
+    console.warn(`Could not resolve Osa seznam inside Playlisty (${rootFolderId}):`, err);
+  }
+
+  return {
+    folderId: osaFolderId || PERMANENT_OSA_FOLDER_ID,
+    folderName: 'Osa seznam',
+  };
 }
 
 /**
@@ -609,8 +840,15 @@ export async function parseXlsxWithExcelJs(buffer: ArrayBuffer): Promise<any[]> 
   return items;
 }
 
+export interface DriveYearFolderCheck {
+  year: number;
+  folderName: string;
+  folderId: string;
+  accessible: boolean;
+}
+
 /**
- * Tests connection to Google Drive and inspects configured folders
+ * Tests connection to Google Drive and inspects configured structured folders
  */
 export async function testDriveConnection(): Promise<{
   authOk: boolean;
@@ -619,6 +857,13 @@ export async function testDriveConnection(): Promise<{
   projectId?: string;
   apiEnabled: boolean;
   activationUrl?: string;
+  rootFolder: {
+    configured: boolean;
+    folderId: string;
+    accessible: boolean;
+    folderName?: string;
+    error?: string;
+  };
   dataFolder: {
     configured: boolean;
     folderId: string;
@@ -630,6 +875,14 @@ export async function testDriveConnection(): Promise<{
     xlsxFileName?: string;
     error?: string;
   };
+  osaFolder: {
+    configured: boolean;
+    folderId: string;
+    accessible: boolean;
+    folderName?: string;
+    error?: string;
+  };
+  yearFolders: DriveYearFolderCheck[];
   exportFolder: {
     configured: boolean;
     folderId: string;
@@ -655,6 +908,10 @@ export async function testDriveConnection(): Promise<{
     ? 'service_account'
     : 'none';
 
+  const emptyRoot = { configured: false, folderId: '', accessible: false };
+  const emptyData = { configured: false, folderId: '', accessible: false, hasMssFile: false, hasXlsxFile: false };
+  const emptyOsa = { configured: false, folderId: '', accessible: false };
+
   if (!auth) {
     return {
       authOk: false,
@@ -662,8 +919,11 @@ export async function testDriveConnection(): Promise<{
       clientEmail: clientEmail || undefined,
       projectId: projectId || undefined,
       apiEnabled: false,
-      dataFolder: { configured: false, folderId: '', accessible: false, hasMssFile: false, hasXlsxFile: false },
-      exportFolder: { configured: false, folderId: '', accessible: false },
+      rootFolder: emptyRoot,
+      dataFolder: emptyData,
+      osaFolder: emptyOsa,
+      yearFolders: [],
+      exportFolder: emptyRoot,
       overallStatus: 'AUTH_ERROR',
       message: 'Google Drive credentials chybí v .env. Nastavte OAuth2 (GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, GOOGLE_REFRESH_TOKEN) nebo Service Account (GOOGLE_CLIENT_EMAIL, GOOGLE_PRIVATE_KEY).',
     };
@@ -682,8 +942,11 @@ export async function testDriveConnection(): Promise<{
         projectId,
         apiEnabled: false,
         activationUrl: match ? match[0] : `https://console.developers.google.com/apis/api/drive.googleapis.com/overview?project=${projectId || '219849626989'}`,
-        dataFolder: { configured: false, folderId: '', accessible: false, hasMssFile: false, hasXlsxFile: false },
-        exportFolder: { configured: false, folderId: '', accessible: false },
+        rootFolder: emptyRoot,
+        dataFolder: emptyData,
+        osaFolder: emptyOsa,
+        yearFolders: [],
+        exportFolder: emptyRoot,
         overallStatus: 'API_DISABLED',
         message: 'V Google Cloud projektu není aktivováno Google Drive API. Povolte ho kliknutím na aktivační odkaz.',
       };
@@ -712,17 +975,44 @@ export async function testDriveConnection(): Promise<{
       clientEmail,
       projectId,
       apiEnabled: false,
-      dataFolder: { configured: false, folderId: '', accessible: false, hasMssFile: false, hasXlsxFile: false },
-      exportFolder: { configured: false, folderId: '', accessible: false },
+      rootFolder: emptyRoot,
+      dataFolder: emptyData,
+      osaFolder: emptyOsa,
+      yearFolders: [],
+      exportFolder: emptyRoot,
       overallStatus: 'AUTH_ERROR',
       message: `Chyba ověření (${authMode}): ${msg}${errDesc ? ` (${errDesc})` : ''} | ClientID=${clientIdHint} | RefreshToken=${tokenHint}`,
     };
   }
 
   // Auth & API are OK, now check folders
-  const { dataFolderId, exportFolderId } = getActiveFolderIds();
+  const { rootFolderId, dataFolderId, osaFolderId } = getActiveFolderIds();
 
-  // 1. Inspect Data Folder
+  // 1. Inspect Root Folder ("Playlisty") & its yearly / OSA subfolders
+  let rootAccessible = false;
+  let rootFolderName = '';
+  let rootError = '';
+  let rootSubfolders: any[] = [];
+
+  if (rootFolderId) {
+    try {
+      const url = `https://www.googleapis.com/drive/v3/files/${rootFolderId}?fields=id,name,mimeType,trashed&supportsAllDrives=true`;
+      const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+      if (res.ok) {
+        const json = await res.json();
+        rootAccessible = true;
+        rootFolderName = json.name;
+        rootSubfolders = await listSubfoldersInFolder(rootFolderId, token);
+      } else {
+        const errJson = await res.json().catch(() => ({}));
+        rootError = errJson.error?.message || `Složka nedostupná (${res.status})`;
+      }
+    } catch (e: any) {
+      rootError = e.message;
+    }
+  }
+
+  // 2. Inspect Data Folder ("Play listy MobileSheets_data")
   let dataAccessible = false;
   let dataFolderName = '';
   let dataError = '';
@@ -740,7 +1030,6 @@ export async function testDriveConnection(): Promise<{
         dataAccessible = true;
         dataFolderName = json.name;
 
-        // List files in data folder
         const files = await searchDrive(`'${dataFolderId}' in parents and trashed = false`, token);
         const mss = files.find((f) => f.name.toLowerCase().endsWith('.mss'));
         const xlsx = files.find((f) => f.name.toLowerCase().endsWith('.xlsx'));
@@ -761,43 +1050,79 @@ export async function testDriveConnection(): Promise<{
     }
   }
 
-  // 2. Inspect Export Folder
-  let exportAccessible = false;
-  let exportFolderName = '';
-  let exportError = '';
+  // 3. Inspect OSA Folder ("Osa seznam")
+  let osaAccessible = false;
+  let osaFolderName = '';
+  let osaError = '';
+  let resolvedOsaFolderId = osaFolderId;
 
-  if (exportFolderId) {
+  const discoveredOsa = rootSubfolders.find((f) =>
+    /^osa\s*[-_]?\s*seznam$/i.test(String(f.name || '').trim())
+  );
+  if (osaFolderId === PERMANENT_OSA_FOLDER_ID && discoveredOsa?.id) {
+    resolvedOsaFolderId = discoveredOsa.id;
+  }
+
+  if (resolvedOsaFolderId) {
     try {
-      const url = `https://www.googleapis.com/drive/v3/files/${exportFolderId}?fields=id,name,mimeType,trashed&supportsAllDrives=true`;
+      const url = `https://www.googleapis.com/drive/v3/files/${resolvedOsaFolderId}?fields=id,name,mimeType,trashed&supportsAllDrives=true`;
       const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
       if (res.ok) {
         const json = await res.json();
-        exportAccessible = true;
-        exportFolderName = json.name;
+        osaAccessible = true;
+        osaFolderName = json.name;
       } else {
         const errJson = await res.json().catch(() => ({}));
-        exportError = errJson.error?.message || `Složka nedostupná (${res.status})`;
+        osaError = errJson.error?.message || `Složka nedostupná (${res.status})`;
       }
     } catch (e: any) {
-      exportError = e.message;
+      osaError = e.message;
     }
   }
 
+  // 4. Assemble discovered + expected yearly folders (2025-2029+)
+  const yearFolderMap = new Map<number, DriveYearFolderCheck>();
+  for (const sub of rootSubfolders) {
+    const match = String(sub.name || '')
+      .trim()
+      .match(/^play\s*list[ys]?\s*[-_]?\s*(\d{4})$/i);
+    if (match) {
+      const yr = parseInt(match[1], 10);
+      yearFolderMap.set(yr, {
+        year: yr,
+        folderName: sub.name,
+        folderId: sub.id,
+        accessible: true,
+      });
+    }
+  }
+  for (const expectedYear of [2025, 2026, 2027, 2028, 2029]) {
+    if (!yearFolderMap.has(expectedYear)) {
+      yearFolderMap.set(expectedYear, {
+        year: expectedYear,
+        folderName: `Playlisty ${expectedYear}`,
+        folderId: PERMANENT_YEAR_FOLDER_IDS[expectedYear] || '',
+        accessible: false,
+      });
+    }
+  }
+  const yearFolders = Array.from(yearFolderMap.values()).sort((a, b) => a.year - b.year);
+
   let overallStatus: 'OK' | 'API_DISABLED' | 'AUTH_ERROR' | 'FOLDER_NOT_SHARED' | 'FILES_MISSING' = 'OK';
-  let message = 'Spojení s Google Diskem i složkami je plně funkční!';
+  let message = 'Spojení s Google Diskem i všemi strukturovanými složkami je plně funkční!';
   let apiEnabled = true;
   let activationUrl: string | undefined;
 
-  const combinedError = `${dataError} ${exportError}`;
+  const combinedError = `${rootError} ${dataError} ${osaError}`;
   if (combinedError.includes('Google Drive API has not been used') || combinedError.includes('is disabled')) {
     apiEnabled = false;
     overallStatus = 'API_DISABLED';
     const match = combinedError.match(/https:\/\/[^\s]+/);
     activationUrl = match ? match[0] : `https://console.developers.google.com/apis/api/drive.googleapis.com/overview?project=${projectId || '219849626989'}`;
     message = 'V Google Cloud projektu dosud NENÍ AKTIVOVÁNO Google Drive API. Klikněte na odkaz a povolte ho (tlačítko Enable).';
-  } else if (!dataAccessible || !exportAccessible) {
+  } else if (!rootAccessible || !dataAccessible || !osaAccessible) {
     overallStatus = 'FOLDER_NOT_SHARED';
-    message = `Servisní účet nemá přístup ke složce. Otevřete Google Disk a nasdílejte složku na e-mail: ${clientEmail} (role Editor).`;
+    message = `Aplikace nemá přístup ke všem složkám. Otevřete na Google Disku nadřazenou složku „Playlisty“ a nasdílejte ji jako Editor na účet: ${clientEmail || 'OAuth2 účet majitele'} (podsložky přístup zdědí).`;
   } else if (!hasMss || !hasXlsx) {
     overallStatus = 'FILES_MISSING';
     const missing = [];
@@ -806,6 +1131,14 @@ export async function testDriveConnection(): Promise<{
     message = `Složka "${dataFolderName}" je přístupná, ale chybí v ní: ${missing.join(', ')}.`;
   }
 
+  const rootReport = {
+    configured: !!rootFolderId,
+    folderId: rootFolderId,
+    accessible: rootAccessible,
+    folderName: rootFolderName,
+    error: rootError,
+  };
+
   return {
     authOk: true,
     authMode,
@@ -813,6 +1146,7 @@ export async function testDriveConnection(): Promise<{
     projectId,
     apiEnabled,
     activationUrl,
+    rootFolder: rootReport,
     dataFolder: {
       configured: !!dataFolderId,
       folderId: dataFolderId,
@@ -824,13 +1158,15 @@ export async function testDriveConnection(): Promise<{
       xlsxFileName: xlsxName,
       error: dataError,
     },
-    exportFolder: {
-      configured: !!exportFolderId,
-      folderId: exportFolderId,
-      accessible: exportAccessible,
-      folderName: exportFolderName,
-      error: exportError,
+    osaFolder: {
+      configured: !!resolvedOsaFolderId,
+      folderId: resolvedOsaFolderId,
+      accessible: osaAccessible,
+      folderName: osaFolderName,
+      error: osaError,
     },
+    yearFolders,
+    exportFolder: rootReport,
     overallStatus,
     message,
   };
@@ -1029,10 +1365,13 @@ export async function syncMasterSongsFromDrive(forceRefresh = false): Promise<{
 export interface ExportDriveOptions {
   allowOverwrite?: boolean;
   role?: 'admin' | 'user';
+  eventName?: string;
+  eventDate?: string;
 }
 
 /**
- * Uploads an exported MSS XML string (and optional PDF) to the configured Google Drive Export folder
+ * Uploads an exported MSS XML string (and optional PDF) to the year-resolved folder
+ * inside Google Drive "Playlisty" (e.g. "Playlisty 2027").
  */
 export async function exportToGoogleDrive(
   fileName: string,
@@ -1045,6 +1384,9 @@ export async function exportToGoogleDrive(
   pdfFileId?: string;
   fileName: string;
   folderId?: string;
+  folderName?: string;
+  resolvedYear?: number;
+  yearSource?: EventYearSource;
   code?: 'FILE_ALREADY_EXISTS';
   statusCode?: number;
   existingFiles?: string[];
@@ -1054,39 +1396,44 @@ export async function exportToGoogleDrive(
   const allowOverwrite = options?.allowOverwrite === true;
   const effectiveRole = options?.role || (allowOverwrite ? 'admin' : 'user');
   const auth = getGoogleAuthClient();
-  const { exportFolderId } = getActiveFolderIds();
 
   const safeFileName = fileName.trim().replace(/\.mss$/i, '') || 'Setlist';
   const mssTargetName = `${safeFileName}.mss`;
   const pdfTargetName = `${safeFileName}.pdf`;
+  const yearResolution = resolveEventYear({
+    eventDate: options?.eventDate,
+    eventName: options?.eventName,
+    fileName: safeFileName,
+  });
 
   if (!auth) {
-    addLog('warning', 'EXPORT_LOCAL_ONLY', `Export "${mssTargetName}" dokončen lokálně. Pro uložení na Google Disk nastavte servisní účet v .env.`);
+    addLog(
+      'warning',
+      'EXPORT_LOCAL_ONLY',
+      `Export "${mssTargetName}" dokončen lokálně (cílová složka: Playlisty / ${yearResolution.targetFolderName}). Pro uložení na Google Disk nastavte přihlášení v .env.`
+    );
     lastExportedAt = Date.now();
     return {
       success: true,
       fileName: mssTargetName,
-      message: 'Export připraven k lokálnímu stažení (přidejte servisní účet do .env pro trvalý automatický upload na Google Disk).',
+      folderName: yearResolution.targetFolderName,
+      resolvedYear: yearResolution.year,
+      yearSource: yearResolution.source,
+      message: `Export připraven k lokálnímu stažení (cílová složka na Disku: Playlisty / ${yearResolution.targetFolderName}; přidejte Google Drive přihlášení do .env pro upload).`,
     };
   }
 
   try {
-    addLog('info', 'EXPORT_START', `Ukládám soubor ${mssTargetName} do exportní složky na Google Disk (role: ${effectiveRole})...`);
-    const token = await getServiceAccountAccessToken();
+    addLog(
+      'info',
+      'EXPORT_START',
+      `Ukládám soubor ${mssTargetName} do roční složky ${yearResolution.targetFolderName} (zdroj roku: ${yearResolution.source}, role: ${effectiveRole})...`
+    );
+    const token = await getDriveAccessToken();
 
-    // 1. Resolve target folder
-    let targetFolderId = exportFolderId;
-    if (!targetFolderId) {
-      // Search "Playlists Mobile Sheets Export"
-      const found = await searchDrive("name = 'Playlists Mobile Sheets Export' and mimeType = 'application/vnd.google-apps.folder' and trashed = false", token);
-      if (found.length > 0) {
-        targetFolderId = found[0].id;
-      }
-    }
-
-    if (!targetFolderId) {
-      throw new Error('Exportní složka není na Google Disku specifikována (nastavte DRIVE_EXPORT_FOLDER_ID v Nastavení nebo .env).');
-    }
+    // 1. Resolve target yearly folder inside "Playlisty"
+    const { folderId: targetFolderId, folderName: targetFolderName } =
+      await resolveYearlyPlaylistFolder(yearResolution.year, token);
 
     // 2. Check existing files in target folder (case- & Unicode-normalization-insensitive)
     const folderFiles = await listFilesInFolder(targetFolderId, token);
@@ -1106,11 +1453,11 @@ export async function exportToGoogleDrive(
 
     // Atomic conflict check BEFORE uploading either .mss or .pdf
     if (!allowOverwrite && existingMatches.length > 0) {
-      const conflictMsg = `Setlist „${safeFileName}“ už na Google Disku existuje (${existingMatches.join(', ')}). S vaším PINem nelze existující soubory přepisovat – změňte prosím název setlistu a zkuste export znovu.`;
+      const conflictMsg = `Setlist „${safeFileName}“ už ve složce „${targetFolderName}“ na Google Disku existuje (${existingMatches.join(', ')}). S vaším PINem nelze existující soubory přepisovat – změňte prosím název setlistu a zkuste export znovu.`;
       addLog(
         'warning',
         'EXPORT_OVERWRITE_BLOCKED',
-        `Blokován pokus o přepis (${effectiveRole}): ${existingMatches.join(', ')} ve složce ${targetFolderId}.`
+        `Blokován pokus o přepis (${effectiveRole}): ${existingMatches.join(', ')} ve složce ${targetFolderName} (${targetFolderId}).`
       );
       return {
         success: false,
@@ -1118,6 +1465,9 @@ export async function exportToGoogleDrive(
         statusCode: 409,
         fileName: mssTargetName,
         folderId: targetFolderId,
+        folderName: targetFolderName,
+        resolvedYear: yearResolution.year,
+        yearSource: yearResolution.source,
         existingFiles: existingMatches,
         error: conflictMsg,
         message: conflictMsg,
@@ -1172,13 +1522,20 @@ export async function exportToGoogleDrive(
           allowOverwrite
         );
         pdfFileId = pdfUpload.pdfFileId;
+        if (!pdfUpload.pdfFileId && pdfUpload.errorText) {
+          addLog('warning', 'PDF_UPLOAD_WARNING', `Varování při ukládání PDF "${pdfTargetName}": ${pdfUpload.errorText}`);
+        }
       } catch (pdfErr) {
         console.warn('PDF upload warning:', pdfErr);
       }
     }
 
     lastExportedAt = Date.now();
-    addLog('success', 'EXPORT_SUCCESS', `Soubor "${mssTargetName}" byl úspěšně uložen na Google Disk do cílové složky.`);
+    addLog(
+      'success',
+      'EXPORT_SUCCESS',
+      `Soubor "${mssTargetName}" byl úspěšně uložen na Google Disk do složky "${targetFolderName}" (${targetFolderId}).`
+    );
 
     return {
       success: true,
@@ -1186,13 +1543,19 @@ export async function exportToGoogleDrive(
       pdfFileId,
       fileName: mssTargetName,
       folderId: targetFolderId,
-      message: `Setlist "${mssTargetName}" byl úspěšně uložen na Google Disk!`,
+      folderName: targetFolderName,
+      resolvedYear: yearResolution.year,
+      yearSource: yearResolution.source,
+      message: `Setlist „${mssTargetName}“ byl úspěšně uložen na Google Disk do složky „Playlisty / ${targetFolderName}“!`,
     };
   } catch (err: any) {
     addLog('error', 'EXPORT_ERROR', `Chyba při exportu na Disk: ${err.message}`);
     return {
       success: false,
       fileName: mssTargetName,
+      folderName: yearResolution.targetFolderName,
+      resolvedYear: yearResolution.year,
+      yearSource: yearResolution.source,
       message: `Chyba při ukládání na Google Disk: ${err.message}`,
     };
   }
@@ -1267,8 +1630,8 @@ async function uploadPdfToDriveFolder(
 }
 
 /**
- * Uploads a PDF-only file (e.g. "Seznam pro OSA - <název akce>.pdf") exclusively
- * into the configured Google Drive Export folder (Play listy MobileSheets_export).
+ * Uploads a PDF-only file (e.g. "Seznam pro OSA - <název akce> <datum>.pdf") exclusively
+ * into the configured Google Drive "Osa seznam" folder inside "Playlisty".
  */
 export async function uploadPdfOnlyToGoogleDrive(
   fileName: string,
@@ -1279,6 +1642,7 @@ export async function uploadPdfOnlyToGoogleDrive(
   pdfFileId?: string;
   fileName: string;
   folderId?: string;
+  folderName?: string;
   updatedExisting?: boolean;
   code?: 'FILE_ALREADY_EXISTS';
   statusCode?: number;
@@ -1289,17 +1653,17 @@ export async function uploadPdfOnlyToGoogleDrive(
   const allowOverwrite = options?.allowOverwrite === true;
   const effectiveRole = options?.role || (allowOverwrite ? 'admin' : 'user');
   const auth = getGoogleAuthClient();
-  const { exportFolderId } = getActiveFolderIds();
   const safeBase = fileName.trim().replace(/\.pdf$/i, '') || 'Seznam pro OSA';
   const pdfTargetName = `${safeBase}.pdf`;
 
   if (!auth) {
     const errMsg =
-      'Google Drive přihlášení není na serveru nakonfigurováno. Seznam pro OSA nelze uložit na Google Disk.';
+      'Google Drive přihlášení není na serveru nakonfigurováno. Seznam pro OSA nelze uložit na Google Disk (složka Playlisty / Osa seznam).';
     addLog('error', 'OSA_EXPORT_AUTH_MISSING', `${pdfTargetName}: ${errMsg}`);
     return {
       success: false,
       fileName: pdfTargetName,
+      folderName: 'Osa seznam',
       message: errMsg,
     };
   }
@@ -1308,18 +1672,20 @@ export async function uploadPdfOnlyToGoogleDrive(
     return {
       success: false,
       fileName: pdfTargetName,
+      folderName: 'Osa seznam',
       message: 'Chybí obsah vygenerovaného PDF souboru.',
     };
   }
 
   try {
+    const token = await getDriveAccessToken();
+    const { folderId: targetFolderId, folderName: targetFolderName } = await resolveOsaFolder(token);
+
     addLog(
       'info',
       'OSA_EXPORT_START',
-      `Ukládám OSA PDF "${pdfTargetName}" do složky Play listy MobileSheets_export (role: ${effectiveRole})...`
+      `Ukládám OSA PDF "${pdfTargetName}" do složky ${targetFolderName} (role: ${effectiveRole})...`
     );
-    const token = await getDriveAccessToken();
-    const targetFolderId = exportFolderId || PERMANENT_EXPORT_FOLDER_ID;
 
     const folderFiles = await listFilesInFolder(targetFolderId, token);
     const normalizedPdfTarget = normalizeDriveFileName(pdfTargetName);
@@ -1328,11 +1694,11 @@ export async function uploadPdfOnlyToGoogleDrive(
     );
 
     if (!allowOverwrite && existingPdf) {
-      const conflictMsg = `Soubor „${existingPdf.name}“ už na Google Disku existuje. S vaším PINem nelze existující soubory přepisovat – změňte prosím název akce a zkuste export znovu.`;
+      const conflictMsg = `Soubor „${existingPdf.name}“ už ve složce „${targetFolderName}“ na Google Disku existuje. S vaším PINem nelze existující soubory přepisovat – změňte prosím název akce a zkuste export znovu.`;
       addLog(
         'warning',
         'OSA_EXPORT_OVERWRITE_BLOCKED',
-        `Blokován pokus o přepis OSA PDF (${effectiveRole}): ${existingPdf.name} ve složce ${targetFolderId}.`
+        `Blokován pokus o přepis OSA PDF (${effectiveRole}): ${existingPdf.name} ve složce ${targetFolderName} (${targetFolderId}).`
       );
       return {
         success: false,
@@ -1340,6 +1706,7 @@ export async function uploadPdfOnlyToGoogleDrive(
         statusCode: 409,
         fileName: pdfTargetName,
         folderId: targetFolderId,
+        folderName: targetFolderName,
         existingFiles: [existingPdf.name],
         error: conflictMsg,
         message: conflictMsg,
@@ -1364,7 +1731,7 @@ export async function uploadPdfOnlyToGoogleDrive(
     addLog(
       'success',
       'OSA_EXPORT_SUCCESS',
-      `Seznam pro OSA "${pdfTargetName}" byl úspěšně uložen na Google Disk (ID: ${uploadRes.pdfFileId}, složka: ${targetFolderId}).`
+      `Seznam pro OSA "${pdfTargetName}" byl úspěšně uložen na Google Disk (ID: ${uploadRes.pdfFileId}, složka: ${targetFolderName} / ${targetFolderId}).`
     );
 
     return {
@@ -1372,14 +1739,16 @@ export async function uploadPdfOnlyToGoogleDrive(
       pdfFileId: uploadRes.pdfFileId,
       fileName: pdfTargetName,
       folderId: targetFolderId,
+      folderName: targetFolderName,
       updatedExisting: uploadRes.updatedExisting,
-      message: `Seznam pro OSA „${pdfTargetName}“ byl úspěšně uložen na Google Disk do složky Play listy MobileSheets_export.`,
+      message: `Seznam pro OSA „${pdfTargetName}“ byl úspěšně uložen na Google Disk do složky „Playlisty / ${targetFolderName}“.`,
     };
   } catch (err: any) {
     addLog('error', 'OSA_EXPORT_ERROR', `Chyba při exportu seznamu pro OSA na Disk: ${err.message}`);
     return {
       success: false,
       fileName: pdfTargetName,
+      folderName: 'Osa seznam',
       message: `Chyba při ukládání seznamu pro OSA na Google Disk: ${err.message}`,
     };
   }
@@ -1405,7 +1774,11 @@ export function getServerDriveStatus(): ServerDriveStatus {
     : 'none';
 
   const projectId = (process.env.GOOGLE_PROJECT_ID || 'pepeto-setlists').trim();
-  const { dataFolderId, exportFolderId } = getActiveFolderIds();
+  const { rootFolderId, dataFolderId, osaFolderId } = getActiveFolderIds();
+  const yearFolderIds: Record<string, string> = {};
+  for (const [y, id] of Object.entries(PERMANENT_YEAR_FOLDER_IDS)) {
+    yearFolderIds[y] = id;
+  }
 
   return {
     serviceAccountConfigured: serviceAccountConfigured || oauth2Configured,
@@ -1416,8 +1789,11 @@ export function getServerDriveStatus(): ServerDriveStatus {
       ? 'OAuth2 (Účet majitele)'
       : undefined,
     projectId: projectId || undefined,
+    rootFolderId: rootFolderId || undefined,
     dataFolderId: dataFolderId || undefined,
-    exportFolderId: exportFolderId || undefined,
+    osaFolderId: osaFolderId || undefined,
+    exportFolderId: rootFolderId || undefined,
+    yearFolderIds,
     hasCachedData: cachedSongs.length > 0,
     totalCachedSongs: cachedSongs.length,
     lastSyncedAt,

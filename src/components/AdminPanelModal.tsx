@@ -27,6 +27,13 @@ interface AdminPanelModalProps {
   totalSongs: number;
 }
 
+interface YearFolderStatus {
+  year: number;
+  folderName: string;
+  folderId: string;
+  accessible: boolean;
+}
+
 interface TestReport {
   authOk: boolean;
   authMode?: 'oauth2' | 'service_account' | 'none';
@@ -34,6 +41,13 @@ interface TestReport {
   projectId?: string;
   apiEnabled: boolean;
   activationUrl?: string;
+  rootFolder?: {
+    configured: boolean;
+    folderId: string;
+    accessible: boolean;
+    folderName?: string;
+    error?: string;
+  };
   dataFolder: {
     configured: boolean;
     folderId: string;
@@ -45,6 +59,14 @@ interface TestReport {
     xlsxFileName?: string;
     error?: string;
   };
+  osaFolder?: {
+    configured: boolean;
+    folderId: string;
+    accessible: boolean;
+    folderName?: string;
+    error?: string;
+  };
+  yearFolders?: YearFolderStatus[];
   exportFolder: {
     configured: boolean;
     folderId: string;
@@ -56,9 +78,10 @@ interface TestReport {
   message: string;
 }
 
-// Permanent default Google Drive folder IDs for Pepeto band
+// Permanent default Google Drive folder IDs for Pepeto band ("Playlisty" hierarchy)
+const PERMANENT_ROOT_FOLDER_ID = '148l9d_0G8INqEVa6RZa_Lo8vyH5RrUqJ';
 const PERMANENT_DATA_FOLDER_ID = '1pZuDqPX6OVbGoYdfOg_p3DqJ0cEhAiq2';
-const PERMANENT_EXPORT_FOLDER_ID = '1gvZxnQDDdQtIMGO7-ai877tdZcYysfs-';
+const PERMANENT_OSA_FOLDER_ID = '1t-ZPYsLBE8RxsOk4hA8H8x0mmPyfyyR6';
 
 export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
   isOpen,
@@ -74,9 +97,10 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
   const [syncFeedback, setSyncFeedback] = useState<string | null>(null);
 
-  // Folder configuration state - prefilled permanently with band's default folders
+  // Folder configuration state - prefilled permanently with band's structured folders
+  const [rootFolderInput, setRootFolderInput] = useState(PERMANENT_ROOT_FOLDER_ID);
   const [dataFolderInput, setDataFolderInput] = useState(PERMANENT_DATA_FOLDER_ID);
-  const [exportFolderInput, setExportFolderInput] = useState(PERMANENT_EXPORT_FOLDER_ID);
+  const [osaFolderInput, setOsaFolderInput] = useState(PERMANENT_OSA_FOLDER_ID);
   const [isSavingFolders, setIsSavingFolders] = useState(false);
   const [folderSaveSuccess, setFolderSaveSuccess] = useState(false);
 
@@ -98,12 +122,13 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
       if (statusRes.ok) {
         const data = await statusRes.json();
         setServerStatus(data);
+        setRootFolderInput(data.rootFolderId || data.exportFolderId || PERMANENT_ROOT_FOLDER_ID);
         setDataFolderInput(data.dataFolderId || PERMANENT_DATA_FOLDER_ID);
-        setExportFolderInput(data.exportFolderId || PERMANENT_EXPORT_FOLDER_ID);
+        setOsaFolderInput(data.osaFolderId || PERMANENT_OSA_FOLDER_ID);
       } else {
-        // Fallback to permanent defaults if status API is offline
+        setRootFolderInput(PERMANENT_ROOT_FOLDER_ID);
         setDataFolderInput(PERMANENT_DATA_FOLDER_ID);
-        setExportFolderInput(PERMANENT_EXPORT_FOLDER_ID);
+        setOsaFolderInput(PERMANENT_OSA_FOLDER_ID);
       }
 
       const logsRes = await fetch('/api/admin/logs', {
@@ -148,8 +173,9 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
           'x-setlist-role': 'admin',
         },
         body: JSON.stringify({
+          rootFolderId: rootFolderInput,
           dataFolderId: dataFolderInput,
-          exportFolderId: exportFolderInput,
+          osaFolderId: osaFolderInput,
         }),
       });
       if (res.ok) {
@@ -309,10 +335,10 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
                     <AlertCircle className="w-5 h-5 text-amber-400 shrink-0 mt-0.5" />
                     <div>
                       <h4 className="text-sm font-bold text-white">
-                        Složka na Google Disku není nasdílena servisnímu účtu!
+                        Složka „Playlisty“ na Google Disku není plně přístupná!
                       </h4>
                       <p className="text-xs text-amber-200 mt-1">
-                        Otevřete svůj Google Disk, klikněte u zdrojové i exportní složky pravým tlačítkem na <strong>Sdílet</strong> a vložte tento e-mail s právy <strong>Editor</strong>:
+                        Otevřete svůj Google Disk, klikněte na nadřazenou složku <strong>Playlisty</strong> pravým tlačítkem na <strong>Sdílet</strong> a nastavte pro účet aplikace oprávnění <strong>Editor</strong> (všechny podsložky přístup automaticky zdědí):
                       </p>
                       <div className="mt-2 flex items-center gap-2 bg-slate-950 p-2 rounded-lg border border-amber-600/50">
                         <code className="text-xs text-amber-300 font-mono select-all flex-1 break-all">
@@ -399,17 +425,17 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
               {/* Status Overview Cards */}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
                 <div className="p-3.5 rounded-xl bg-slate-800/60 border border-slate-700">
-                  <span className="text-slate-400 block text-[11px]">Zdrojová složka (Data):</span>
-                  <div className="mt-1 flex items-center justify-between">
+                  <span className="text-slate-400 block text-[11px]">Zdrojová složka (Play listy MobileSheets_data):</span>
+                  <div className="mt-1 flex items-center justify-between gap-2">
                     <span className="font-bold text-white truncate">
                       {testReport?.dataFolder?.folderName || serverStatus?.dataFolderId || PERMANENT_DATA_FOLDER_ID}
                     </span>
                     {testReport?.dataFolder?.accessible ? (
-                      <span className="flex items-center gap-1 text-[11px] font-bold text-emerald-400 bg-emerald-950/80 border border-emerald-800/80 px-2 py-0.5 rounded">
+                      <span className="flex items-center gap-1 text-[11px] font-bold text-emerald-400 bg-emerald-950/80 border border-emerald-800/80 px-2 py-0.5 rounded shrink-0">
                         <CheckCircle className="w-3 h-3" /> Přístupná
                       </span>
                     ) : (
-                      <span className="flex items-center gap-1 text-[11px] font-bold text-emerald-400 bg-emerald-950/80 border border-emerald-800/80 px-2 py-0.5 rounded">
+                      <span className="flex items-center gap-1 text-[11px] font-bold text-emerald-400 bg-emerald-950/80 border border-emerald-800/80 px-2 py-0.5 rounded shrink-0">
                         <CheckCircle className="w-3 h-3" /> Nastaveno stálé ID
                       </span>
                     )}
@@ -433,17 +459,17 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
                 </div>
 
                 <div className="p-3.5 rounded-xl bg-slate-800/60 border border-slate-700">
-                  <span className="text-slate-400 block text-[11px]">Cílová exportní složka:</span>
-                  <div className="mt-1 flex items-center justify-between">
+                  <span className="text-slate-400 block text-[11px]">Složka pro OSA (Osa seznam):</span>
+                  <div className="mt-1 flex items-center justify-between gap-2">
                     <span className="font-bold text-white truncate">
-                      {testReport?.exportFolder?.folderName || serverStatus?.exportFolderId || PERMANENT_EXPORT_FOLDER_ID}
+                      {testReport?.osaFolder?.folderName || serverStatus?.osaFolderId || PERMANENT_OSA_FOLDER_ID}
                     </span>
-                    {testReport?.exportFolder?.accessible ? (
-                      <span className="flex items-center gap-1 text-[11px] font-bold text-emerald-400 bg-emerald-950/80 border border-emerald-800/80 px-2 py-0.5 rounded">
+                    {testReport?.osaFolder?.accessible ? (
+                      <span className="flex items-center gap-1 text-[11px] font-bold text-emerald-400 bg-emerald-950/80 border border-emerald-800/80 px-2 py-0.5 rounded shrink-0">
                         <CheckCircle className="w-3 h-3" /> Přístupná
                       </span>
                     ) : (
-                      <span className="flex items-center gap-1 text-[11px] font-bold text-emerald-400 bg-emerald-950/80 border border-emerald-800/80 px-2 py-0.5 rounded">
+                      <span className="flex items-center gap-1 text-[11px] font-bold text-emerald-400 bg-emerald-950/80 border border-emerald-800/80 px-2 py-0.5 rounded shrink-0">
                         <CheckCircle className="w-3 h-3" /> Nastaveno stálé ID
                       </span>
                     )}
@@ -451,6 +477,58 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
                   <div className="mt-2 text-[11px] text-slate-400 pt-2 border-t border-slate-700/60">
                     Aktivní počet skladeb v aplikaci: <strong className="text-white">{totalSongs} skladeb</strong>
                   </div>
+                </div>
+              </div>
+
+              {/* Root Playlisty & Yearly Subfolders Card */}
+              <div className="p-3.5 rounded-xl bg-slate-800/60 border border-slate-700 text-xs space-y-2.5">
+                <div className="flex items-center justify-between gap-2">
+                  <div>
+                    <span className="text-slate-400 block text-[11px]">
+                      Nadřazená složka exportů (Playlisty) a automatické roční podsložky:
+                    </span>
+                    <span className="font-bold text-white">
+                      {testReport?.rootFolder?.folderName || 'Playlisty'} ({serverStatus?.rootFolderId || PERMANENT_ROOT_FOLDER_ID})
+                    </span>
+                  </div>
+                  {testReport?.rootFolder?.accessible ? (
+                    <span className="flex items-center gap-1 text-[11px] font-bold text-emerald-400 bg-emerald-950/80 border border-emerald-800/80 px-2 py-0.5 rounded shrink-0">
+                      <CheckCircle className="w-3 h-3" /> Přístupná
+                    </span>
+                  ) : (
+                    <span className="flex items-center gap-1 text-[11px] font-bold text-emerald-400 bg-emerald-950/80 border border-emerald-800/80 px-2 py-0.5 rounded shrink-0">
+                      <CheckCircle className="w-3 h-3" /> Nastaveno stálé ID
+                    </span>
+                  )}
+                </div>
+
+                <div className="flex flex-wrap gap-1.5 pt-1 border-t border-slate-700/60">
+                  {(testReport?.yearFolders && testReport.yearFolders.length > 0
+                    ? testReport.yearFolders
+                    : [2025, 2026, 2027, 2028, 2029].map((year) => ({
+                        year,
+                        folderName: `Playlisty ${year}`,
+                        folderId: serverStatus?.yearFolderIds?.[String(year)] || '',
+                        accessible: false,
+                      }))
+                  ).map((yf) => (
+                    <span
+                      key={yf.year}
+                      className={`inline-flex items-center gap-1 px-2 py-1 rounded-lg border text-[11px] font-semibold ${
+                        yf.accessible
+                          ? 'bg-emerald-950/60 border-emerald-700/70 text-emerald-300'
+                          : 'bg-slate-900 border-slate-700 text-slate-300'
+                      }`}
+                      title={yf.folderId ? `ID: ${yf.folderId}` : 'Nenalezeno'}
+                    >
+                      {yf.accessible ? (
+                        <CheckCircle className="w-3 h-3 text-emerald-400" />
+                      ) : (
+                        <Folder className="w-3 h-3 text-slate-400" />
+                      )}
+                      <span>{yf.folderName}</span>
+                    </span>
+                  ))}
                 </div>
               </div>
             </div>
@@ -463,44 +541,61 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
                 <div className="flex items-center justify-between">
                   <h3 className="text-xs font-bold uppercase tracking-wider text-indigo-400 flex items-center gap-1.5">
                     <Folder className="w-4 h-4" />
-                    <span>Nastavení Google Drive složek pro import a export</span>
+                    <span>Nastavení strukturovaných Google Drive složek</span>
                   </h3>
                 </div>
                 <p className="text-xs text-slate-300">
-                  Můžete vložit buď čisté ID složky, nebo celý odkaz (URL) z adresního řádku prohlížeče (např. <code className="text-indigo-300 bg-slate-900 px-1 py-0.5 rounded">https://drive.google.com/drive/folders/1pZuDqPX6OV...</code>).
+                  Roční exportní podsložky (<strong>Playlisty 2025–2029+</strong>) se vyhledávají automaticky uvnitř hlavní složky <strong>Playlisty</strong>. Můžete vložit ID nebo celý URL odkaz složky.
                 </p>
 
-                {/* Data Folder Input */}
+                {/* Root Playlisty Folder Input */}
                 <div className="space-y-1.5">
                   <label className="block text-xs font-semibold text-slate-200">
-                    1. Zdrojová složka (Data - obsahuje PEPETO_KOMPLET_SETLIST.mss a PEPETA_KOMPLET.xlsx):
+                    1. Hlavní složka „Playlisty“ (obsahuje roční složky Playlisty 2025–2029+):
+                  </label>
+                  <input
+                    type="text"
+                    value={rootFolderInput}
+                    onChange={(e) => setRootFolderInput(e.target.value)}
+                    placeholder="Vložte URL nebo ID složky Playlisty..."
+                    className="w-full px-3 py-2 rounded-xl bg-slate-900 border border-slate-700 text-xs font-mono text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  />
+                  <span className="text-[11px] text-slate-400 block">
+                    Stálé ID složky Playlisty: <code className="text-indigo-300 font-mono">{serverStatus?.rootFolderId || PERMANENT_ROOT_FOLDER_ID}</code>
+                  </span>
+                </div>
+
+                {/* Data Folder Input */}
+                <div className="space-y-1.5 pt-2 border-t border-slate-700/60">
+                  <label className="block text-xs font-semibold text-slate-200">
+                    2. Zdrojová složka dat („Play listy MobileSheets_data“ – PEPETO_KOMPLET_SETLIST.mss a PEPETA_KOMPLET.xlsx):
                   </label>
                   <input
                     type="text"
                     value={dataFolderInput}
                     onChange={(e) => setDataFolderInput(e.target.value)}
-                    placeholder="Vložte URL nebo ID složky..."
+                    placeholder="Vložte URL nebo ID zdrojové složky..."
                     className="w-full px-3 py-2 rounded-xl bg-slate-900 border border-slate-700 text-xs font-mono text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-indigo-500"
                   />
                   <span className="text-[11px] text-slate-400 block">
-                    Stálé ID složky: <code className="text-indigo-300 font-mono">{serverStatus?.dataFolderId || PERMANENT_DATA_FOLDER_ID}</code>
+                    Stálé ID složky Data: <code className="text-indigo-300 font-mono">{serverStatus?.dataFolderId || PERMANENT_DATA_FOLDER_ID}</code>
                   </span>
                 </div>
 
-                {/* Export Folder Input */}
+                {/* OSA Folder Input */}
                 <div className="space-y-1.5 pt-2 border-t border-slate-700/60">
                   <label className="block text-xs font-semibold text-slate-200">
-                    2. Cílová složka (Export - kam se ukládají vygenerované soubory MSS a PDF):
+                    3. Složka pro OSA seznamy („Osa seznam“ – ukládá PDF pro OSA):
                   </label>
                   <input
                     type="text"
-                    value={exportFolderInput}
-                    onChange={(e) => setExportFolderInput(e.target.value)}
-                    placeholder="Vložte URL nebo ID složky..."
+                    value={osaFolderInput}
+                    onChange={(e) => setOsaFolderInput(e.target.value)}
+                    placeholder="Vložte URL nebo ID složky Osa seznam..."
                     className="w-full px-3 py-2 rounded-xl bg-slate-900 border border-slate-700 text-xs font-mono text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-indigo-500"
                   />
                   <span className="text-[11px] text-slate-400 block">
-                    Stálé ID složky: <code className="text-indigo-300 font-mono">{serverStatus?.exportFolderId || PERMANENT_EXPORT_FOLDER_ID}</code>
+                    Stálé ID složky Osa seznam: <code className="text-indigo-300 font-mono">{serverStatus?.osaFolderId || PERMANENT_OSA_FOLDER_ID}</code>
                   </span>
                 </div>
 
@@ -518,8 +613,9 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
                     <button
                       type="button"
                       onClick={() => {
+                        setRootFolderInput(PERMANENT_ROOT_FOLDER_ID);
                         setDataFolderInput(PERMANENT_DATA_FOLDER_ID);
-                        setExportFolderInput(PERMANENT_EXPORT_FOLDER_ID);
+                        setOsaFolderInput(PERMANENT_OSA_FOLDER_ID);
                       }}
                       className="bg-slate-800 hover:bg-slate-700 text-slate-300 font-medium text-xs px-3 py-2.5 rounded-xl transition border border-slate-700 active:scale-95 cursor-pointer"
                       title="Obnovit stálá ID složek kapely Pepeto"
@@ -619,9 +715,9 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
                 </div>
 
                 <div className="p-3 rounded-lg bg-slate-800/60 border border-slate-700">
-                  <div className="font-bold text-white mb-1">3. Nasdílení složek na Disku e-mailu servisního účtu</div>
+                  <div className="font-bold text-white mb-1">3. Nasdílení nadřazené složky „Playlisty“ na Disku</div>
                   <p className="mb-2">
-                    Otevřete svůj Google Disk a u zdrojové složky i exportní složky klikněte na <strong>Sdílet</strong>. Vložte e-mail vašeho servisního účtu a nastavte oprávnění <strong>Editor</strong>.
+                    Otevřete svůj Google Disk, najděte nadřazenou složku <strong>Playlisty</strong> (která obsahuje <em>Play listy MobileSheets_data</em>, roční složky <em>Playlisty 2025–2029</em> a <em>Osa seznam</em>), klikněte na <strong>Sdílet</strong> a nastavte oprávnění <strong>Editor</strong> (všechny podsložky přístup automaticky zdědí).
                   </p>
                   {serverStatus?.clientEmail && (
                     <div className="flex items-center gap-2 bg-slate-950 p-2 rounded border border-slate-800">

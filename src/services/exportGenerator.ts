@@ -3,6 +3,7 @@ import * as jspdfModule from 'jspdf';
 import * as autoTableModule from 'jspdf-autotable';
 import type { SetlistGroup, Song } from '../types/index.ts';
 import { CZECH_FONT_BOLD_BASE64, CZECH_FONT_REGULAR_BASE64 } from './czechFontBase64';
+import { composeEventFileBaseName, formatCzechDate } from '../utils/eventMetadata.ts';
 
 // Resilient class constructor resolution across Vite (browser ESM) and Node.js (tsx / CommonJS)
 const JsPDFConstructor: new (...args: any[]) => JsPdfType =
@@ -129,9 +130,10 @@ export function cleanTitleForPdf(rawTitle: string, songId?: number): string {
 export function generateMssXml(
   projectName: string,
   sets: SetlistGroup[],
-  songsMap: Map<number, Song>
+  songsMap: Map<number, Song>,
+  eventDate?: string
 ): string {
-  const safeProjectName = projectName.trim() || 'Setlist Akce';
+  const safeProjectName = composeEventFileBaseName(projectName, eventDate, 'Setlist Akce');
   let xml = `<?xml version='1.0' encoding='UTF-8' standalone='no' ?>\n`;
   xml += `<Setlists>\n`;
 
@@ -186,7 +188,8 @@ export function generateMssXml(
 export async function generatePdf(
   projectName: string,
   sets: SetlistGroup[],
-  songsMap: Map<number, Song>
+  songsMap: Map<number, Song>,
+  eventDate?: string
 ): Promise<{ doc: JsPdfType; blob: Blob; dataUrl: string }> {
   const doc = new JsPDFConstructor({
     orientation: 'portrait',
@@ -196,7 +199,8 @@ export async function generatePdf(
 
   const pageWidth = doc.internal.pageSize.getWidth();
   const pageHeight = doc.internal.pageSize.getHeight();
-  const safeProjectName = projectName.trim() || 'Setlist';
+  const safeProjectName = composeEventFileBaseName(projectName, eventDate, 'Setlist');
+  const czechDate = formatCzechDate(eventDate);
 
   // Registrace Unicode fontů s kompletní podporou české diakritiky
   doc.addFileToVFS('CzechFont-Bold.ttf', CZECH_FONT_BOLD_BASE64);
@@ -378,14 +382,14 @@ export async function generatePdf(
       },
     });
 
-    // Page footer: bottom right filename "${safeProjectName}.xlsx"
+    // Page footer: optional event date bottom-left, composed event name bottom-right
     doc.setFont('CzechFont', 'normal');
     doc.setFontSize(8);
     doc.setTextColor(30, 30, 30);
-    const footerName = safeProjectName.toLowerCase().endsWith('.xlsx')
-      ? safeProjectName
-      : `${safeProjectName}.xlsx`;
-    doc.text(footerName, pageWidth - 16, pageHeight - 8, { align: 'right' });
+    if (czechDate) {
+      doc.text(`Datum akce: ${czechDate}`, 16, pageHeight - 8);
+    }
+    doc.text(safeProjectName, pageWidth - 16, pageHeight - 8, { align: 'right' });
   });
 
   const blob = doc.output('blob');
@@ -432,11 +436,12 @@ function cleanEventNameForOsa(eventName: string): string {
 }
 
 /**
- * Builds the canonical OSA PDF base file name: "Seznam pro OSA - <název akce>".
- * Preserves date dots (e.g. 13.02.2026) and only strips known file extensions.
+ * Builds the canonical OSA PDF base file name: "Seznam pro OSA - <název akce> <datum>".
+ * Preserves date dots (e.g. 03.01.2027) and avoids duplicating the date if already in eventName.
  */
-export function buildOsaFileBaseName(eventName: string): string {
-  return `Seznam pro OSA - ${cleanEventNameForOsa(eventName)}`;
+export function buildOsaFileBaseName(eventName: string, eventDate?: string): string {
+  const composed = composeEventFileBaseName(cleanEventNameForOsa(eventName), eventDate, 'Setlist');
+  return `Seznam pro OSA - ${cleanEventNameForOsa(composed)}`;
 }
 
 /**
@@ -504,7 +509,8 @@ export function buildOsaSongRows(
 export async function generateOsaPdf(
   eventName: string,
   sets: SetlistGroup[],
-  songsMap: Map<number, Song>
+  songsMap: Map<number, Song>,
+  eventDate?: string
 ): Promise<{
   doc: JsPdfType;
   blob: Blob;
@@ -531,10 +537,11 @@ export async function generateOsaPdf(
 
   const fontName = 'CzechFont';
   const cleanEvent = cleanEventNameForOsa(eventName);
-  const fileBaseName = buildOsaFileBaseName(eventName);
+  const fileBaseName = buildOsaFileBaseName(eventName, eventDate);
   const fileName = `${fileBaseName}.pdf`;
   const rows = buildOsaSongRows(sets, songsMap);
   const generatedDate = new Date().toLocaleDateString('cs-CZ');
+  const displayDate = formatCzechDate(eventDate) || generatedDate;
 
   // 1. Dark-navy OSA header banner
   doc.setFillColor(0, 32, 114);
@@ -582,7 +589,7 @@ export async function generateOsaPdf(
   doc.setFont(fontName, 'bold');
   doc.text('Datum:', marginX + 133, row2Y);
   doc.setFont(fontName, 'normal');
-  doc.text(generatedDate, marginX + 146, row2Y);
+  doc.text(displayDate, marginX + 146, row2Y);
 
   // 3. Official intro note
   const noteY = metaTop + metaHeight + 5.5;

@@ -9,20 +9,24 @@ import {
   RefreshCw,
 } from 'lucide-react';
 import type { OsaSongRow } from '../services/exportGenerator';
+import { EventDatePicker } from './EventDatePicker';
+import { composeEventFileBaseName, formatCzechDate } from '../utils/eventMetadata';
 
 export interface OsaDriveStatus {
   state: 'idle' | 'generating' | 'uploading' | 'success' | 'offline_queued' | 'error' | 'conflict';
   message?: string;
   updatedExisting?: boolean;
   existingFiles?: string[];
+  folderName?: string;
 }
 
 interface Props {
   isOpen: boolean;
   onClose: () => void;
   onRetryUpload: () => void;
-  onRenameAndRetry?: (newEventName: string) => void;
+  onRenameAndRetry?: (newEventName: string, newEventDate?: string) => void;
   eventName: string;
+  eventDate?: string;
   fileName: string;
   rows: OsaSongRow[];
   status: OsaDriveStatus;
@@ -34,18 +38,21 @@ export const OsaExportModal: React.FC<Props> = ({
   onRetryUpload,
   onRenameAndRetry,
   eventName,
+  eventDate = '',
   fileName,
   rows,
   status,
 }) => {
   const isBusy = status.state === 'generating' || status.state === 'uploading';
   const [renameDraft, setRenameDraft] = useState(eventName);
+  const [renameDateDraft, setRenameDateDraft] = useState(eventDate);
 
   useEffect(() => {
     if (isOpen) {
       setRenameDraft(eventName);
+      setRenameDateDraft(eventDate);
     }
-  }, [isOpen, eventName, status.state]);
+  }, [isOpen, eventName, eventDate, status.state]);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -60,11 +67,14 @@ export const OsaExportModal: React.FC<Props> = ({
 
   if (!isOpen) return null;
 
-  const trimmedEvent = eventName.trim();
+  const czechDate = formatCzechDate(eventDate);
+  const folderDisplay = status.folderName || 'Osa seznam';
   const trimmedRenameDraft = renameDraft.trim();
+  const originalBase = composeEventFileBaseName(eventName, eventDate, 'Setlist').toLocaleLowerCase('cs-CZ');
+  const draftBase = composeEventFileBaseName(trimmedRenameDraft || eventName, renameDateDraft, 'Setlist').toLocaleLowerCase('cs-CZ');
   const canRenameRetry = Boolean(
-    trimmedRenameDraft &&
-      trimmedRenameDraft.toLocaleLowerCase('cs-CZ') !== trimmedEvent.toLocaleLowerCase('cs-CZ') &&
+    (trimmedRenameDraft || renameDateDraft) &&
+      (draftBase !== originalBase || renameDateDraft !== eventDate) &&
       !isBusy
   );
   const completeCount = rows.filter((r) => r.hasAuthorInfo).length;
@@ -97,11 +107,17 @@ export const OsaExportModal: React.FC<Props> = ({
                 </h2>
                 <span className="inline-flex items-center gap-1 rounded-full bg-blue-50 dark:bg-blue-950/70 border border-blue-200 dark:border-blue-700/60 px-2.5 py-0.5 text-[11px] font-semibold text-blue-700 dark:text-blue-300">
                   <CloudUpload className="w-3 h-3" />
-                  <span>Google Disk → Play listy MobileSheets_export</span>
+                  <span>Google Disk → Playlisty / {folderDisplay}</span>
                 </span>
               </div>
               <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5 truncate">
-                Akce: <strong className="text-slate-900 dark:text-white">{eventName.trim() || 'Setlist'}</strong> &bull; Soubor: <code className="font-mono text-indigo-600 dark:text-indigo-300">{fileName}</code>
+                Akce: <strong className="text-slate-900 dark:text-white">{eventName.trim() || 'Setlist'}</strong>
+                {czechDate ? (
+                  <>
+                    {' '}&bull; Datum: <strong className="text-slate-900 dark:text-white">{czechDate}</strong>
+                  </>
+                ) : null}{' '}
+                &bull; Soubor: <code className="font-mono text-indigo-600 dark:text-indigo-300">{fileName}</code>
               </p>
             </div>
           </div>
@@ -129,7 +145,7 @@ export const OsaExportModal: React.FC<Props> = ({
           {status.state === 'uploading' && (
             <div className="flex items-center gap-2.5 p-3 rounded-xl bg-blue-50 dark:bg-blue-950/60 border border-blue-200 dark:border-blue-700/60 text-xs text-blue-900 dark:text-blue-200">
               <span className="w-4 h-4 rounded-full border-2 border-blue-500 border-t-transparent animate-spin shrink-0" />
-              <span>Ukládám soubor na Google Disk do složky Play listy MobileSheets_export…</span>
+              <span>Ukládám soubor na Google Disk do složky Playlisty / {folderDisplay}…</span>
             </div>
           )}
 
@@ -144,7 +160,7 @@ export const OsaExportModal: React.FC<Props> = ({
                 </div>
                 <div>
                   {status.message ||
-                    `PDF „${fileName}“ je připraveno ve složce Play listy MobileSheets_export k přiložení do online žádosti na osa.cz.`}
+                    `PDF „${fileName}“ je připraveno ve složce Playlisty / ${folderDisplay} k přiložení do online žádosti na osa.cz.`}
                 </div>
               </div>
             </div>
@@ -155,7 +171,7 @@ export const OsaExportModal: React.FC<Props> = ({
               <AlertCircle className="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
               <span>
                 {status.message ||
-                  'Jste v režimu offline. Seznam pro OSA byl zařazen do lokální fronty a automaticky se uloží na Google Disk do složky Play listy MobileSheets_export po obnovení připojení.'}
+                  `Jste v režimu offline. Seznam pro OSA byl zařazen do lokální fronty a automaticky se uloží na Google Disk do složky Playlisty / ${folderDisplay} po obnovení připojení.`}
               </span>
             </div>
           )}
@@ -185,7 +201,7 @@ export const OsaExportModal: React.FC<Props> = ({
                   onSubmit={(e) => {
                     e.preventDefault();
                     if (canRenameRetry) {
-                      onRenameAndRetry(trimmedRenameDraft);
+                      onRenameAndRetry(trimmedRenameDraft || eventName.trim() || 'Setlist', renameDateDraft);
                     }
                   }}
                   className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 pt-1"
@@ -197,13 +213,20 @@ export const OsaExportModal: React.FC<Props> = ({
                     placeholder="Nový název akce..."
                     className="flex-1 rounded-lg bg-white dark:bg-slate-900 border border-amber-400 dark:border-amber-600/70 px-3 py-2 text-xs font-semibold text-slate-900 dark:text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-amber-500"
                   />
+                  <EventDatePicker
+                    value={renameDateDraft}
+                    onChange={setRenameDateDraft}
+                    ariaLabel="Nové datum akce"
+                    size="md"
+                    className="!bg-white dark:!bg-slate-900 !border-amber-400 dark:!border-amber-600/70"
+                  />
                   <button
                     type="submit"
                     disabled={!canRenameRetry}
                     className="inline-flex items-center justify-center gap-1.5 rounded-lg bg-amber-500 hover:bg-amber-400 disabled:opacity-40 disabled:pointer-events-none text-slate-950 font-bold text-xs px-3.5 py-2 transition cursor-pointer shrink-0"
                   >
                     <RefreshCw className="w-3.5 h-3.5" />
-                    <span>Přejmenovat a uložit na Disk</span>
+                    <span>Přejmenovat a uložit do „{folderDisplay}“</span>
                   </button>
                 </form>
               )}
@@ -244,7 +267,7 @@ export const OsaExportModal: React.FC<Props> = ({
               </span>
             </div>
             <span className="text-[11px] text-slate-500 dark:text-slate-400">
-              Seznam se generuje výhradně na Google Disk (složka export)
+              Seznam se generuje výhradně na Google Disk (Playlisty / {folderDisplay})
             </span>
           </div>
 

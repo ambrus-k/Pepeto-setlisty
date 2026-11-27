@@ -11,13 +11,19 @@ import {
   FolderOpen,
   ListOrdered,
   ClipboardList,
+  Folder,
+  AlertTriangle,
 } from 'lucide-react';
 import { UserRole } from '../types';
 import { PWAInstallButton } from './PWAInstallButton';
+import { EventDatePicker } from './EventDatePicker';
+import { resolveEventYear } from '../utils/eventMetadata';
 
 interface HeaderProps {
   eventName: string;
   onEventNameChange: (name: string) => void;
+  eventDate: string;
+  onEventDateChange: (date: string) => void;
   role: UserRole;
   onLogout: () => void;
   onGenerateAndSave: () => void;
@@ -34,6 +40,8 @@ interface HeaderProps {
 export const Header: React.FC<HeaderProps> = ({
   eventName,
   onEventNameChange,
+  eventDate,
+  onEventDateChange,
   role,
   onLogout,
   onGenerateAndSave,
@@ -49,6 +57,7 @@ export const Header: React.FC<HeaderProps> = ({
   const fileInputRef = useRef<HTMLInputElement>(null);
   const ioMenuRef = useRef<HTMLDivElement>(null);
   const [isIoMenuOpen, setIsIoMenuOpen] = useState(false);
+  const yearResolution = resolveEventYear({ eventDate, eventName });
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -96,8 +105,8 @@ export const Header: React.FC<HeaderProps> = ({
             />
           </div>
 
-          {/* Shortened Setlist Name Input right next to Logo */}
-          <div className="flex items-center gap-1.5 flex-1 min-w-[6.5rem] max-w-[13rem] sm:max-w-[17rem] lg:max-w-[22rem]">
+          {/* Dual Setlist Metadata Inputs: Event Name + Calendar Date */}
+          <div className="flex items-center gap-1 sm:gap-1.5 flex-1 min-w-[9rem] max-w-[28rem]">
             <label
               htmlFor="eventNameInput"
               className="text-[0.6875rem] font-semibold uppercase tracking-wider text-indigo-600 dark:text-indigo-400 shrink-0 hidden lg:inline"
@@ -109,9 +118,43 @@ export const Header: React.FC<HeaderProps> = ({
               type="text"
               value={eventName}
               onChange={(e) => onEventNameChange(e.target.value)}
-              placeholder="Název setlistu..."
-              className="w-full rounded-lg bg-slate-100 dark:bg-slate-800/90 border border-slate-300 dark:border-slate-700 px-2.5 py-1 text-xs sm:text-sm font-semibold text-slate-900 dark:text-white placeholder-slate-400 dark:placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition"
+              placeholder="Název akce..."
+              aria-label="Název akce"
+              className="flex-1 min-w-[5.25rem] rounded-lg bg-slate-100 dark:bg-slate-800/90 border border-slate-300 dark:border-slate-700 px-2 sm:px-2.5 py-1 text-xs sm:text-sm font-semibold text-slate-900 dark:text-white placeholder-slate-400 dark:placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition"
             />
+            <EventDatePicker
+              id="eventDateInput"
+              value={eventDate}
+              onChange={onEventDateChange}
+              hasWarning={yearResolution.hasYearMismatch}
+              size="compact"
+              title={
+                yearResolution.hasYearMismatch
+                  ? `Rok v datu (${yearResolution.calendarYear}) se liší od roku v názvu (${yearResolution.nameYear}). Export použije kalendářní datum → složka „${yearResolution.targetFolderName}“.`
+                  : `Vybrat datum akce z kalendáře (cílová složka: Playlisty / ${yearResolution.targetFolderName})`
+              }
+            />
+            <span
+              className={`hidden xl:inline-flex items-center gap-1 rounded-md px-2 py-1 text-[0.6875rem] font-bold shrink-0 border ${
+                yearResolution.hasYearMismatch
+                  ? 'bg-amber-50 dark:bg-amber-950/60 text-amber-700 dark:text-amber-300 border-amber-300 dark:border-amber-600/60'
+                  : eventDate
+                  ? 'bg-emerald-50 dark:bg-emerald-950/50 text-emerald-700 dark:text-emerald-300 border-emerald-200 dark:border-emerald-700/50'
+                  : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 border-slate-300 dark:border-slate-700'
+              }`}
+              title={
+                yearResolution.hasYearMismatch
+                  ? `Pozor: rok v kalendáři (${yearResolution.calendarYear}) se liší od roku v názvu (${yearResolution.nameYear}). Export půjde do „${yearResolution.targetFolderName}“.`
+                  : `Cílová složka na Google Disku: Playlisty / ${yearResolution.targetFolderName}`
+              }
+            >
+              {yearResolution.hasYearMismatch ? (
+                <AlertTriangle className="w-3 h-3 shrink-0" />
+              ) : (
+                <Folder className="w-3 h-3 shrink-0" />
+              )}
+              <span>{yearResolution.targetFolderName}</span>
+            </span>
           </div>
 
           {/* Upravit sety button right next to Setlist Name & Import/Export */}
@@ -232,7 +275,7 @@ export const Header: React.FC<HeaderProps> = ({
                         Export MSS na Disk
                       </div>
                       <div className="text-[0.6875rem] text-slate-500 dark:text-slate-400">
-                        Uložit na Google Disk a zobrazit náhled
+                        Uložit .mss a .pdf do „{yearResolution.targetFolderName}“
                       </div>
                     </div>
                   </button>
@@ -252,7 +295,7 @@ export const Header: React.FC<HeaderProps> = ({
                         Seznam pro OSA
                       </div>
                       <div className="text-[0.6875rem] text-slate-500 dark:text-slate-400">
-                        Uložit PDF pro OSA na Google Disk (export)
+                        Uložit PDF pro OSA do složky „Osa seznam“
                       </div>
                     </div>
                   </button>

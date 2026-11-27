@@ -8,6 +8,7 @@ import {
   normalizeHexColor,
 } from './parser';
 import { parseExcelAllStyles } from './excelStyleParser';
+import { splitEventNameAndDate } from '../utils/eventMetadata.ts';
 
 export interface UnmatchedSongItem {
   tempId: number;
@@ -21,6 +22,7 @@ export interface ImportResult {
   fileType: 'mss' | 'xlsx';
   fileName: string;
   eventName: string;
+  eventDate?: string;
   sets: SetlistGroup[];
   newSongs: Song[];
   totalSongs: number;
@@ -372,16 +374,21 @@ export function importMssText(
     });
   }
 
-  const cleanEventName =
+  const rawCleanEventName =
     eventNameCandidate ||
     defaultFileName.replace(/\.(mss|xml)$/i, '').trim() ||
     'Importovaný setlist';
+  const splitFromCandidate = splitEventNameAndDate(rawCleanEventName);
+  const splitFromFile = splitEventNameAndDate(defaultFileName);
+  const cleanEventName = splitFromCandidate.eventName || rawCleanEventName;
+  const eventDate = splitFromCandidate.eventDate || splitFromFile.eventDate;
 
   return {
     success: true,
     fileType: 'mss',
     fileName: defaultFileName,
     eventName: cleanEventName,
+    eventDate,
     sets: newSets,
     newSongs,
     totalSongs: totalSongsCount,
@@ -604,14 +611,16 @@ export async function importXlsxBuffer(
     });
   }
 
-  // Event name from filename (e.g. "Oleško 22.08.2026.xlsx" -> "Oleško 22.08.2026")
-  const cleanEventName = defaultFileName.replace(/\.(xlsx|xls)$/i, '').trim() || 'Oleško 22.08.2026';
+  // Event name and optional date from filename (e.g. "Oleško 22.08.2026.xlsx" -> "Oleško" + "2026-08-22")
+  const rawEventName = defaultFileName.replace(/\.(xlsx|xls)$/i, '').trim() || 'Oleško 22.08.2026';
+  const { eventName: cleanEventName, eventDate } = splitEventNameAndDate(rawEventName);
 
   return {
     success: true,
     fileType: 'xlsx',
     fileName: defaultFileName,
-    eventName: cleanEventName,
+    eventName: cleanEventName || rawEventName,
+    eventDate,
     sets: newSets,
     newSongs,
     totalSongs: totalSongsCount,

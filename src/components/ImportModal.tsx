@@ -11,6 +11,7 @@ import {
   FileCheck,
 } from 'lucide-react';
 import { Song, SetlistGroup } from '../types';
+import { EventDatePicker } from './EventDatePicker';
 import {
   importMssText,
   importXlsxBuffer,
@@ -40,11 +41,14 @@ export const ImportModal: React.FC<ImportModalProps> = ({
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [parsedPreview, setParsedPreview] = useState<ImportResult | null>(null);
   const [editableEventName, setEditableEventName] = useState<string>('');
+  const [editableEventDate, setEditableEventDate] = useState<string>('');
 
   if (!isOpen) return null;
 
   const handleReset = () => {
     setParsedPreview(null);
+    setEditableEventName('');
+    setEditableEventDate('');
     setErrorMessage(null);
     setIsProcessing(false);
     if (fileInputRef.current) fileInputRef.current.value = '';
@@ -64,6 +68,7 @@ export const ImportModal: React.FC<ImportModalProps> = ({
         const result = importMssText(text, masterSongs, fileName);
         setParsedPreview(result);
         setEditableEventName(result.eventName);
+        setEditableEventDate(result.eventDate || '');
       } else if (
         lower.endsWith('.xlsx') ||
         lower.endsWith('.xls') ||
@@ -74,6 +79,7 @@ export const ImportModal: React.FC<ImportModalProps> = ({
         const result = await importXlsxBuffer(buffer, masterSongs, fileName);
         setParsedPreview(result);
         setEditableEventName(result.eventName);
+        setEditableEventDate(result.eventDate || '');
       } else {
         throw new Error('Nepodporovaný typ souboru. Zvolte prosím soubor .mss (XML) nebo .xlsx (Excel).');
       }
@@ -109,6 +115,7 @@ export const ImportModal: React.FC<ImportModalProps> = ({
       const result = await importXlsxBuffer(buffer, masterSongs, fileName);
       setParsedPreview(result);
       setEditableEventName(result.eventName);
+      setEditableEventDate(result.eventDate || '');
     } catch (err: any) {
       setErrorMessage(err.message || 'Chyba při načítání ukázky.');
     } finally {
@@ -124,6 +131,7 @@ export const ImportModal: React.FC<ImportModalProps> = ({
       const result = importMssText(xml, masterSongs, fileName);
       setParsedPreview(result);
       setEditableEventName(result.eventName);
+      setEditableEventDate(result.eventDate || '');
     } catch (err: any) {
       setErrorMessage(err.message || 'Chyba při načítání ukázky.');
     } finally {
@@ -133,9 +141,10 @@ export const ImportModal: React.FC<ImportModalProps> = ({
 
   const handleConfirmImport = () => {
     if (!parsedPreview) return;
-    const finalResult = {
+    const finalResult: ImportResult = {
       ...parsedPreview,
       eventName: editableEventName.trim() || parsedPreview.eventName,
+      eventDate: editableEventDate.trim() || undefined,
     };
     onApplyImport(finalResult);
     onClose();
@@ -299,17 +308,31 @@ export const ImportModal: React.FC<ImportModalProps> = ({
                 </button>
               </div>
 
-              {/* Event Name Input */}
-              <div className="rounded-xl bg-slate-50 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 p-3.5 space-y-1.5">
-                <label className="block text-[0.6875rem] font-semibold uppercase tracking-wider text-indigo-600 dark:text-indigo-400">
-                  Název akce / vystoupení (bude uložen do hlavičky)
-                </label>
-                <input
-                  type="text"
-                  value={editableEventName}
-                  onChange={(e) => setEditableEventName(e.target.value)}
-                  className="w-full rounded-lg bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 px-3.5 py-2.5 text-base font-bold text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500 transition"
-                />
+              {/* Event Name & Date Inputs */}
+              <div className="rounded-xl bg-slate-50 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 p-3.5 grid grid-cols-1 sm:grid-cols-[1fr_auto] gap-3 items-end">
+                <div className="space-y-1.5">
+                  <label className="block text-[0.6875rem] font-semibold uppercase tracking-wider text-indigo-600 dark:text-indigo-400">
+                    Název akce / vystoupení
+                  </label>
+                  <input
+                    type="text"
+                    value={editableEventName}
+                    onChange={(e) => setEditableEventName(e.target.value)}
+                    className="w-full rounded-lg bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 px-3.5 py-2 text-base font-bold text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500 transition"
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <label className="block text-[0.6875rem] font-semibold uppercase tracking-wider text-indigo-600 dark:text-indigo-400">
+                    Datum akce (kalendář)
+                  </label>
+                  <EventDatePicker
+                    value={editableEventDate}
+                    onChange={setEditableEventDate}
+                    ariaLabel="Datum akce"
+                    size="md"
+                    className="w-full sm:w-auto justify-between !bg-white dark:!bg-slate-900 py-2.5"
+                  />
+                </div>
               </div>
 
               {/* Matching Statistics */}

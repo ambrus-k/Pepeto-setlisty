@@ -26,11 +26,13 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   }
 
   try {
-    const { fileName, mssXml, pdfBase64, pdfOnly } = req.body || {};
+    const { fileName, mssXml, pdfBase64, pdfOnly, eventName, eventDate } = req.body || {};
     const auth = resolveExportAuth(req.headers);
     const exportOptions = {
       allowOverwrite: auth.allowOverwrite,
       role: auth.role,
+      eventName: typeof eventName === 'string' ? eventName : undefined,
+      eventDate: typeof eventDate === 'string' ? eventDate : undefined,
     };
 
     if (pdfOnly || (!mssXml && pdfBase64)) {

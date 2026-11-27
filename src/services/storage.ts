@@ -26,8 +26,10 @@ export interface WorkspaceUiState {
   activePane: 'left' | 'right';
 }
 
+export const PERMANENT_ROOT_FOLDER_ID = '148l9d_0G8INqEVa6RZa_Lo8vyH5RrUqJ';
 export const PERMANENT_DATA_FOLDER_ID = '1pZuDqPX6OVbGoYdfOg_p3DqJ0cEhAiq2';
-export const PERMANENT_EXPORT_FOLDER_ID = '1gvZxnQDDdQtIMGO7-ai877tdZcYysfs-';
+export const PERMANENT_OSA_FOLDER_ID = '1t-ZPYsLBE8RxsOk4hA8H8x0mmPyfyyR6';
+export const PERMANENT_EXPORT_FOLDER_ID = PERMANENT_ROOT_FOLDER_ID;
 
 function isValidProject(obj: unknown): obj is EventProject {
   if (!obj || typeof obj !== 'object') return false;
@@ -168,8 +170,12 @@ export const storage = {
 
   // Drive folder & file configuration
   async getDriveSettings(): Promise<{
+    rootFolderName: string;
+    rootFolderId: string;
     dataFolderName: string;
     dataFolderId?: string;
+    osaFolderName: string;
+    osaFolderId: string;
     exportFolderName: string;
     exportFolderId?: string;
     mssFileName?: string;
@@ -177,19 +183,27 @@ export const storage = {
   }> {
     const saved = await store.getItem<any>(KEYS.SETTINGS);
     return {
-      dataFolderName: saved?.dataFolderName || 'Playlists Mobile Sheets Data',
+      rootFolderName: saved?.rootFolderName || 'Playlisty',
+      rootFolderId: saved?.rootFolderId || PERMANENT_ROOT_FOLDER_ID,
+      dataFolderName: saved?.dataFolderName || 'Play listy MobileSheets_data',
       dataFolderId: saved?.dataFolderId || PERMANENT_DATA_FOLDER_ID,
-      exportFolderName: saved?.exportFolderName || 'Playlists Mobile Sheets Export',
-      exportFolderId: saved?.exportFolderId || PERMANENT_EXPORT_FOLDER_ID,
+      osaFolderName: saved?.osaFolderName || 'Osa seznam',
+      osaFolderId: saved?.osaFolderId || PERMANENT_OSA_FOLDER_ID,
+      exportFolderName: saved?.exportFolderName || 'Playlisty',
+      exportFolderId: saved?.exportFolderId || PERMANENT_ROOT_FOLDER_ID,
       mssFileName: saved?.mssFileName || 'PEPETO_KOMPLET_SETLIST.mss',
       xlsxFileName: saved?.xlsxFileName || 'PEPETA_KOMPLET.xlsx',
     };
   },
 
   async saveDriveSettings(settings: {
+    rootFolderName?: string;
+    rootFolderId?: string;
     dataFolderName: string;
     dataFolderId?: string;
-    exportFolderName: string;
+    osaFolderName?: string;
+    osaFolderId?: string;
+    exportFolderName?: string;
     exportFolderId?: string;
     mssFileName?: string;
     xlsxFileName?: string;

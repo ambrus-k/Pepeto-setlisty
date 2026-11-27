@@ -38,11 +38,13 @@ import {
   matchesSongFilter,
   compareSongsBySort,
 } from './utils/songFilters';
+import { composeEventFileBaseName, resolveEventYear } from './utils/eventMetadata';
 
 const MAX_HISTORY_STEPS = 5;
 
 interface HistorySnapshot {
   eventName: string;
+  eventDate: string;
   sets: SetlistGroup[];
   label: string;
 }
@@ -187,9 +189,12 @@ function SetlistStudio() {
   }
   const initialUiRef = useRef(storage.getWorkspaceUiSync());
 
-  // App State - event name, setlist groups, and master song database
+  // App State - event name, event date, setlist groups, and master song database
   const [eventName, setEventName] = useState<string>(
     () => initialSyncProjectRef.current?.eventName ?? ''
+  );
+  const [eventDate, setEventDate] = useState<string>(
+    () => initialSyncProjectRef.current?.eventDate ?? ''
   );
   const [sets, setSets] = useState<SetlistGroup[]>(() =>
     initialSyncProjectRef.current?.sets && initialSyncProjectRef.current.sets.length > 0
@@ -214,11 +219,12 @@ function SetlistStudio() {
 
   // Hydration & flush guards so mount NEVER overwrites saved IndexedDB/localStorage data
   const hasHydratedProjectRef = useRef<boolean>(false);
-  const latestProjectRef = useRef<{ eventName: string; sets: SetlistGroup[] }>({
+  const latestProjectRef = useRef<{ eventName: string; eventDate: string; sets: SetlistGroup[] }>({
     eventName,
+    eventDate,
     sets,
   });
-  latestProjectRef.current = { eventName, sets };
+  latestProjectRef.current = { eventName, eventDate, sets };
 
   // Undo / Redo history stacks (up to 5 steps back & 5 steps forward)
   const [undoStack, setUndoStack] = useState<HistorySnapshot[]>([]);
@@ -227,6 +233,7 @@ function SetlistStudio() {
   const recordHistory = useCallback((label: string) => {
     const snap: HistorySnapshot = {
       eventName: latestProjectRef.current.eventName,
+      eventDate: latestProjectRef.current.eventDate,
       sets: cloneSets(latestProjectRef.current.sets),
       label,
     };
@@ -239,6 +246,7 @@ function SetlistStudio() {
     const prevSnap = undoStack[undoStack.length - 1];
     const currentSnap: HistorySnapshot = {
       eventName: latestProjectRef.current.eventName,
+      eventDate: latestProjectRef.current.eventDate,
       sets: cloneSets(latestProjectRef.current.sets),
       label: prevSnap.label,
     };
@@ -248,6 +256,7 @@ function SetlistStudio() {
     setUndoStack(nextUndo);
     setRedoStack(nextRedo);
     setEventName(prevSnap.eventName);
+    setEventDate(prevSnap.eventDate);
     setSets(cloneSets(prevSnap.sets));
     setLeftSelection(new Set());
     setRightSelection(new Set());
@@ -259,6 +268,7 @@ function SetlistStudio() {
     const nextSnap = redoStack[redoStack.length - 1];
     const currentSnap: HistorySnapshot = {
       eventName: latestProjectRef.current.eventName,
+      eventDate: latestProjectRef.current.eventDate,
       sets: cloneSets(latestProjectRef.current.sets),
       label: nextSnap.label,
     };
@@ -268,6 +278,7 @@ function SetlistStudio() {
     setRedoStack(nextRedo);
     setUndoStack(nextUndo);
     setEventName(nextSnap.eventName);
+    setEventDate(nextSnap.eventDate);
     setSets(cloneSets(nextSnap.sets));
     setLeftSelection(new Set());
     setRightSelection(new Set());
@@ -309,7 +320,14 @@ function SetlistStudio() {
     state: 'idle' | 'uploading' | 'success' | 'offline_queued' | 'error' | 'conflict';
     message?: string;
     existingFiles?: string[];
+    folderName?: string;
+    resolvedYear?: number;
   }>({ state: 'idle' });
+
+  const resolvedYearInfo = useMemo(
+    () => resolveEventYear({ eventDate, eventName }),
+    [eventDate, eventName]
+  );
 
   // OSA export state (uploads exclusively to Google Drive export folder)
   const [isOsaExportOpen, setIsOsaExportOpen] = useState<boolean>(false);
@@ -418,6 +436,7 @@ function SetlistStudio() {
           // Apply IndexedDB copy if there was no sync mirror or if IndexedDB is newer
           if (!initialSyncProjectRef.current || idbUpdatedAt > syncUpdatedAt) {
             setEventName(savedProject.eventName || '');
+            setEventDate(savedProject.eventDate || '');
             if (savedProject.sets && savedProject.sets.length > 0) {
               setSets(savedProject.sets);
               if (!initialUiRef.current) {
@@ -473,11 +492,12 @@ function SetlistStudio() {
     const project: EventProject = {
       id: 'current-session',
       eventName,
+      eventDate: eventDate || undefined,
       sets,
       updatedAt: Date.now(),
     };
     storage.saveCurrentProject(project).catch(console.error);
-  }, [eventName, sets]);
+  }, [eventName, eventDate, sets]);
 
   // 2b. Persist pane layout state (which sources are open in Left/Right panes)
   useEffect(() => {
@@ -495,6 +515,7 @@ function SetlistStudio() {
       storage.saveCurrentProjectSync({
         id: 'current-session',
         eventName: latestProjectRef.current.eventName,
+        eventDate: latestProjectRef.current.eventDate || undefined,
         sets: latestProjectRef.current.sets,
         updatedAt: Date.now(),
       });
@@ -620,6 +641,7 @@ function SetlistStudio() {
                   pdfBase64,
                   pdfOnly: true,
                   eventName: item.eventName,
+                  eventDate: item.eventDate,
                 }),
               });
               if (res.ok) {
@@ -649,6 +671,7 @@ function SetlistStudio() {
                 mssXml: mssXml || undefined,
                 pdfBase64,
                 eventName: item.eventName,
+                eventDate: item.eventDate,
               }),
             });
             if (res.ok) {
@@ -1182,11 +1205,12 @@ function SetlistStudio() {
     showSuccess('Změny setlistů byly uloženy.');
   };
 
-  // Start fresh: clear main event name and create Set 1..9 + Lidovky (default songs) + Zbytek
+  // Start fresh: clear main event name & date and create Set 1..9 + Lidovky (default songs) + Zbytek
   const handleStartFresh = () => {
     recordHistory('Začít znovu');
     const freshSets = createFreshSets();
     setEventName('');
+    setEventDate('');
     setSets(freshSets);
     setLeftSourceId(freshSets[0].id);
     setRightSourceId('library');
@@ -1280,6 +1304,7 @@ function SetlistStudio() {
     if (result.eventName) {
       setEventName(result.eventName);
     }
+    setEventDate(result.eventDate || '');
 
     if (result.newSongs && result.newSongs.length > 0) {
       setSongs((prevSongs) => {
@@ -1365,16 +1390,32 @@ function SetlistStudio() {
     );
   };
 
-  // 7. Export Generator & Silent Backend Drive Export (100% preserved)
-  const handleGenerateAndSave = async (overrideEventName?: string) => {
+  // 7. Export Generator & Silent Backend Drive Export
+  const handleGenerateAndSave = async (overrideEventName?: string, overrideEventDate?: string) => {
     const nextEventName = typeof overrideEventName === 'string' ? overrideEventName : eventName;
+    const nextEventDate = typeof overrideEventDate === 'string' ? overrideEventDate : eventDate;
     if (typeof overrideEventName === 'string') {
       setEventName(overrideEventName);
     }
+    if (typeof overrideEventDate === 'string') {
+      setEventDate(overrideEventDate);
+    }
+
+    const yearResolution = resolveEventYear({
+      eventDate: nextEventDate,
+      eventName: nextEventName,
+    });
+    const safeName = composeEventFileBaseName(nextEventName, nextEventDate, 'Setlist');
+    const pdfFileName = `${safeName}.pdf`;
+    const mssFileName = `${safeName}.mss`;
 
     setIsExporting(true);
     setIsExportOpen(true);
-    setDriveExportStatus({ state: 'uploading' });
+    setDriveExportStatus({
+      state: 'uploading',
+      folderName: yearResolution.targetFolderName,
+      resolvedYear: yearResolution.year,
+    });
 
     const formatTime = () => `[${new Date().toLocaleTimeString('cs-CZ')}]`;
 
@@ -1403,17 +1444,15 @@ function SetlistStudio() {
       }));
     };
 
-    const safeName = nextEventName.trim() || 'Setlist';
-    const pdfFileName = `${safeName}.pdf`;
-    const mssFileName = `${safeName}.mss`;
-
     try {
       setExportProgress({
         progress: 5,
         stepId: 'prep',
         stepLabel: 'Zahajuji proces exportu...',
         steps: DEFAULT_EXPORT_PROGRESS.steps.map((s) => ({ ...s, status: 'pending' })),
-        logs: [`${formatTime()} Zahájeno generování exportních souborů pro: ${safeName}`],
+        logs: [
+          `${formatTime()} Zahájeno generování exportních souborů pro: ${safeName} → cíl: Playlisty / ${yearResolution.targetFolderName}`,
+        ],
       });
 
       updateStep('prep', 'in_progress', 15, 'Příprava listů a ověřování skladeb...');
@@ -1424,7 +1463,12 @@ function SetlistStudio() {
 
       updateStep('pdf', 'in_progress', 35, 'Generuji barevné PDF pro pódium...');
       pushLog('Vykresluji tiskové stránky s českým fontem (CzechFont) a autentickými barvami...');
-      const { blob: pdfBlob, dataUrl } = await generatePdf(nextEventName, sets, songsMap);
+      const { blob: pdfBlob, dataUrl } = await generatePdf(
+        nextEventName,
+        sets,
+        songsMap,
+        nextEventDate
+      );
       setExportedPdfBlob(pdfBlob);
       setExportedPdfDataUrl(dataUrl);
       pushLog(`✓ PDF arch vytvořen (${(pdfBlob.size / 1024).toFixed(1)} kB, A4 tabulkový formát).`);
@@ -1433,7 +1477,7 @@ function SetlistStudio() {
 
       updateStep('mss', 'in_progress', 65, 'Sestavuji MobileSheets XML strukturu...');
       pushLog('Generuji uzly <Setlist> a <Song> pro aplikaci MobileSheets...');
-      const mssXml = generateMssXml(nextEventName, sets, songsMap);
+      const mssXml = generateMssXml(nextEventName, sets, songsMap, nextEventDate);
       setExportedMssXml(mssXml);
       const mssSize = new Blob([mssXml]).size;
       pushLog(`✓ XML kód (.mss) zkompilován (${(mssSize / 1024).toFixed(1)} kB, UTF-8).`);
@@ -1442,7 +1486,7 @@ function SetlistStudio() {
 
       if (isOnline) {
         updateStep('drive_auth', 'in_progress', 82, 'Připojuji se ke Google Disku...');
-        pushLog('Ověřuji spojení se službou Google Drive API přes backend...');
+        pushLog(`Ověřuji spojení a vyhledávám roční složku „Playlisty / ${yearResolution.targetFolderName}“...`);
 
         const reader = new FileReader();
         const base64Promise = new Promise<string>((resolve) => {
@@ -1452,8 +1496,8 @@ function SetlistStudio() {
         const pdfBase64 = await base64Promise;
 
         updateStep('drive_auth', 'done', 88, 'Google Drive API připojeno');
-        updateStep('drive_upload', 'in_progress', 92, 'Ukládám soubory na Google Disk...');
-        pushLog(`Odesílám soubory "${mssFileName}" a "${pdfFileName}" do exportní složky...`);
+        updateStep('drive_upload', 'in_progress', 92, `Ukládám do ${yearResolution.targetFolderName}...`);
+        pushLog(`Odesílám soubory "${mssFileName}" a "${pdfFileName}" do složky „Playlisty / ${yearResolution.targetFolderName}“...`);
 
         const res = await fetch('/api/drive/export', {
           method: 'POST',
@@ -1462,23 +1506,31 @@ function SetlistStudio() {
             fileName: mssFileName,
             mssXml,
             pdfBase64,
-            eventName: safeName,
+            eventName: nextEventName.trim() || safeName,
+            eventDate: nextEventDate || undefined,
           }),
         });
 
         const data = await res.json().catch(() => ({}));
+        const resolvedFolder = data.folderName || yearResolution.targetFolderName;
+        const resolvedYear = data.resolvedYear || yearResolution.year;
+
         if (res.ok && data.success !== false) {
-          pushLog(`✓ Úspěšně nahráno a potvrzeno Google Cloudem (ID souboru: ${data.mssFileId || 'export_ok'}).`);
-          updateStep('drive_upload', 'done', 100, 'Uloženo na Google Disk');
+          pushLog(`✓ Úspěšně nahráno do „Playlisty / ${resolvedFolder}“ (ID souboru: ${data.mssFileId || 'export_ok'}).`);
+          updateStep('drive_upload', 'done', 100, `Uloženo do ${resolvedFolder}`);
           setDriveExportStatus({
             state: 'success',
-            message: data.message || `Setlist "${mssFileName}" byl úspěšně uložen do exportní složky na Google Disku!`,
+            folderName: resolvedFolder,
+            resolvedYear,
+            message:
+              data.message ||
+              `Setlist "${mssFileName}" byl úspěšně uložen na Google Disk do složky „Playlisty / ${resolvedFolder}“!`,
           });
         } else if (res.status === 409 || data.code === 'FILE_ALREADY_EXISTS') {
           const conflictMsg =
             data.error ||
             data.message ||
-            `Setlist „${safeName}“ už na Google Disku existuje. S vaším PINem nelze existující soubory přepisovat – změňte název setlistu a zkuste export znovu.`;
+            `Setlist „${safeName}“ už ve složce „${resolvedFolder}“ na Google Disku existuje. S vaším PINem nelze existující soubory přepisovat – změňte název setlistu a zkuste export znovu.`;
           pushLog(`⚠️ ${conflictMsg}`);
           updateStep(
             'drive_upload',
@@ -1489,6 +1541,8 @@ function SetlistStudio() {
           );
           setDriveExportStatus({
             state: 'conflict',
+            folderName: resolvedFolder,
+            resolvedYear,
             message: conflictMsg,
             existingFiles: Array.isArray(data.existingFiles) ? data.existingFiles : undefined,
           });
@@ -1499,11 +1553,13 @@ function SetlistStudio() {
       } else {
         updateStep('drive_auth', 'done', 88, 'Offline režim');
         updateStep('drive_upload', 'done', 100, 'Uloženo do lokální paměti');
-        pushLog('Offline režim: Export zařazen do lokální IndexedDB fronty pro pozdější synchronizaci.');
+        pushLog(`Offline režim: Export zařazen do lokální IndexedDB fronty (cíl po připojení: Playlisty / ${yearResolution.targetFolderName}).`);
 
         await storage.addPendingUpload({
           id: `upload-${Date.now()}-bundle`,
           eventName: nextEventName,
+          eventDate: nextEventDate || undefined,
+          targetFolderName: yearResolution.targetFolderName,
           fileName: mssFileName,
           fileType: 'bundle',
           blobData: new Blob([mssXml], { type: 'text/xml' }),
@@ -1512,7 +1568,11 @@ function SetlistStudio() {
           status: 'pending',
         });
 
-        setDriveExportStatus({ state: 'offline_queued' });
+        setDriveExportStatus({
+          state: 'offline_queued',
+          folderName: yearResolution.targetFolderName,
+          resolvedYear: yearResolution.year,
+        });
       }
     } catch (err: any) {
       console.error('Export failed:', err);
@@ -1520,6 +1580,8 @@ function SetlistStudio() {
       updateStep('drive_upload', 'error', 100, 'Chyba při exportu');
       setDriveExportStatus({
         state: 'error',
+        folderName: yearResolution.targetFolderName,
+        resolvedYear: yearResolution.year,
         message: err.message || 'Chyba při ukládání na Google Disk.',
       });
     } finally {
@@ -1527,24 +1589,28 @@ function SetlistStudio() {
     }
   };
 
-  // Quick downloads (100% preserved)
+  // Quick downloads
   const handleQuickDownloadPdf = async () => {
-    const { blob } = await generatePdf(eventName, sets, songsMap);
-    const safeName = eventName.trim() || 'Setlist';
+    const { blob } = await generatePdf(eventName, sets, songsMap, eventDate);
+    const safeName = composeEventFileBaseName(eventName, eventDate, 'Setlist');
     downloadFile(blob, `${safeName}.pdf`, 'application/pdf');
   };
 
   const handleQuickDownloadMss = () => {
-    const xml = generateMssXml(eventName, sets, songsMap);
-    const safeName = eventName.trim() || 'Setlist';
+    const xml = generateMssXml(eventName, sets, songsMap, eventDate);
+    const safeName = composeEventFileBaseName(eventName, eventDate, 'Setlist');
     downloadFile(xml, `${safeName}.mss`, 'text/xml');
   };
 
-  // 8. OSA Playlist PDF Export (exclusively to Google Drive export folder)
-  const handleGenerateOsaList = async (overrideEventName?: string) => {
+  // 8. OSA Playlist PDF Export (exclusively to Google Drive "Playlisty / Osa seznam" folder)
+  const handleGenerateOsaList = async (overrideEventName?: string, overrideEventDate?: string) => {
     const rawEventName = typeof overrideEventName === 'string' ? overrideEventName : eventName;
+    const nextEventDate = typeof overrideEventDate === 'string' ? overrideEventDate : eventDate;
     if (typeof overrideEventName === 'string') {
       setEventName(overrideEventName);
+    }
+    if (typeof overrideEventDate === 'string') {
+      setEventDate(overrideEventDate);
     }
 
     const trimmedEvent = rawEventName.trim();
@@ -1566,24 +1632,25 @@ function SetlistStudio() {
       return;
     }
 
-    const targetBaseName = buildOsaFileBaseName(trimmedEvent);
+    const targetBaseName = buildOsaFileBaseName(trimmedEvent, nextEventDate);
     setIsExporting(true);
     setOsaExportRows(previewRows);
     setOsaFileName(`${targetBaseName}.pdf`);
     setIsOsaExportOpen(true);
-    setOsaDriveStatus({ state: 'generating' });
+    setOsaDriveStatus({ state: 'generating', folderName: 'Osa seznam' });
 
     try {
       const { blob, fileBaseName, fileName, rows } = await generateOsaPdf(
         trimmedEvent,
         sets,
-        songsMap
+        songsMap,
+        nextEventDate
       );
       setOsaExportRows(rows);
       setOsaFileName(fileName);
 
       if (isOnline) {
-        setOsaDriveStatus({ state: 'uploading' });
+        setOsaDriveStatus({ state: 'uploading', folderName: 'Osa seznam' });
 
         const pdfBase64 = await new Promise<string>((resolve, reject) => {
           const reader = new FileReader();
@@ -1600,17 +1667,20 @@ function SetlistStudio() {
             pdfBase64,
             pdfOnly: true,
             eventName: trimmedEvent,
+            eventDate: nextEventDate || undefined,
           }),
         });
 
         const data = await res.json().catch(() => ({}));
+        const resolvedOsaFolder = data.folderName || 'Osa seznam';
         if (res.status === 409 || data.code === 'FILE_ALREADY_EXISTS') {
           const conflictMsg =
             data.error ||
             data.message ||
-            `Soubor „${fileName}“ už na Google Disku existuje. Změňte prosím název akce a zkuste export znovu.`;
+            `Soubor „${fileName}“ už ve složce „${resolvedOsaFolder}“ na Google Disku existuje. Změňte prosím název akce a zkuste export znovu.`;
           setOsaDriveStatus({
             state: 'conflict',
+            folderName: resolvedOsaFolder,
             message: conflictMsg,
             existingFiles: Array.isArray(data.existingFiles) ? data.existingFiles : undefined,
           });
@@ -1627,14 +1697,17 @@ function SetlistStudio() {
 
         setOsaDriveStatus({
           state: 'success',
+          folderName: resolvedOsaFolder,
           message: data.message,
           updatedExisting: data.updatedExisting,
         });
-        showSuccess(`Seznam „${fileName}“ byl uložen na Google Disk.`, 'OSA seznam uložen');
+        showSuccess(`Seznam „${fileName}“ byl uložen na Google Disk (${resolvedOsaFolder}).`, 'OSA seznam uložen');
       } else {
         await storage.addPendingUpload({
           id: `upload-${Date.now()}-osa`,
           eventName: trimmedEvent,
+          eventDate: nextEventDate || undefined,
+          targetFolderName: 'Osa seznam',
           fileName: fileBaseName,
           fileType: 'osa-pdf',
           blobData: blob,
@@ -1644,14 +1717,16 @@ function SetlistStudio() {
 
         setOsaDriveStatus({
           state: 'offline_queued',
+          folderName: 'Osa seznam',
           message:
-            'Jste offline. Seznam pro OSA byl zařazen do fronty a automaticky se uloží do složky Play listy MobileSheets_export po obnovení připojení.',
+            'Jste offline. Seznam pro OSA byl zařazen do fronty a automaticky se uloží do složky Playlisty / Osa seznam po obnovení připojení.',
         });
       }
     } catch (err: any) {
       console.error('OSA export failed:', err);
       setOsaDriveStatus({
         state: 'error',
+        folderName: 'Osa seznam',
         message: err?.message || 'Chyba při ukládání seznamu pro OSA na Google Disk.',
       });
     } finally {
@@ -1661,10 +1736,12 @@ function SetlistStudio() {
 
   return (
     <div className="tc-app-shell bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 flex flex-col font-sans selection:bg-indigo-500/30 selection:text-indigo-900 dark:selection:text-indigo-200 transition-colors">
-      {/* Row 1: Compact Header (Logo + Setlist Name + Upravit sety + Combined Import/Export + Settings + Logout) */}
+      {/* Row 1: Compact Header (Logo + Setlist Name & Date + Upravit sety + Combined Import/Export + Settings + Logout) */}
       <Header
         eventName={eventName}
         onEventNameChange={setEventName}
+        eventDate={eventDate}
+        onEventDateChange={setEventDate}
         role={role || 'user'}
         onLogout={logout}
         onGenerateAndSave={() => handleGenerateAndSave()}
@@ -1821,6 +1898,8 @@ function SetlistStudio() {
         isOpen={isExportOpen}
         onClose={() => setIsExportOpen(false)}
         eventName={eventName}
+        eventDate={eventDate}
+        resolvedYearInfo={resolvedYearInfo}
         pdfBlob={exportedPdfBlob}
         pdfDataUrl={exportedPdfDataUrl}
         mssXml={exportedMssXml}
@@ -1829,7 +1908,7 @@ function SetlistStudio() {
         isExporting={isExporting}
         exportProgress={exportProgress}
         driveStatus={driveExportStatus}
-        onRenameAndRetry={(newName) => handleGenerateAndSave(newName)}
+        onRenameAndRetry={(newName, newDate) => handleGenerateAndSave(newName, newDate)}
       />
 
       {/* OSA Export Modal (Drive-only export) */}
@@ -1837,8 +1916,9 @@ function SetlistStudio() {
         isOpen={isOsaExportOpen}
         onClose={() => setIsOsaExportOpen(false)}
         onRetryUpload={() => handleGenerateOsaList()}
-        onRenameAndRetry={(newName) => handleGenerateOsaList(newName)}
+        onRenameAndRetry={(newName, newDate) => handleGenerateOsaList(newName, newDate)}
         eventName={eventName}
+        eventDate={eventDate}
         fileName={osaFileName}
         rows={osaExportRows}
         status={osaDriveStatus}

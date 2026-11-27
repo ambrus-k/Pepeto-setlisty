@@ -62,11 +62,13 @@ app.get('/api/drive/sync', async (req: Request, res: Response) => {
 // 3. Google Drive Export endpoint
 app.post('/api/drive/export', async (req: Request, res: Response) => {
   try {
-    const { fileName, mssXml, pdfBase64, pdfOnly } = req.body || {};
+    const { fileName, mssXml, pdfBase64, pdfOnly, eventName, eventDate } = req.body || {};
     const auth = resolveExportAuth(req.headers as Record<string, string | string[] | undefined>);
     const exportOptions = {
       allowOverwrite: auth.allowOverwrite,
       role: auth.role,
+      eventName: typeof eventName === 'string' ? eventName : undefined,
+      eventDate: typeof eventDate === 'string' ? eventDate : undefined,
     };
 
     if (pdfOnly || (!mssXml && pdfBase64)) {
@@ -108,8 +110,12 @@ app.post('/api/drive/export', async (req: Request, res: Response) => {
 
 // 4. Save Folder Settings endpoint
 app.post('/api/drive/folders', (req: Request, res: Response) => {
-  const { dataFolderId, exportFolderId } = req.body;
-  const updated = saveFolderSettings(dataFolderId || '', exportFolderId || '');
+  const { rootFolderId, dataFolderId, osaFolderId, exportFolderId } = req.body || {};
+  const updated = saveFolderSettings({
+    rootFolderId: rootFolderId || exportFolderId,
+    dataFolderId,
+    osaFolderId,
+  });
   return res.json({ success: true, ...updated });
 });
 

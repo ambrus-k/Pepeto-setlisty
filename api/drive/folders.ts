@@ -24,8 +24,12 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   }
 
   try {
-    const { dataFolderId, exportFolderId } = req.body || {};
-    const updated = saveFolderSettings(dataFolderId || '', exportFolderId || '');
+    const { rootFolderId, dataFolderId, osaFolderId, exportFolderId } = req.body || {};
+    const updated = saveFolderSettings({
+      rootFolderId: rootFolderId || exportFolderId,
+      dataFolderId,
+      osaFolderId,
+    });
     return res.status(200).json({ success: true, ...updated });
   } catch (error: any) {
     return res.status(500).json({

@@ -108,6 +108,8 @@ export interface DriveFileInfo {
 export interface PendingUpload {
   id: string;
   eventName: string;
+  eventDate?: string;
+  targetFolderName?: string;
   fileName: string;
   fileType: 'pdf' | 'mss' | 'bundle' | 'osa-pdf';
   blobData: Blob;
@@ -132,8 +134,11 @@ export interface ServerDriveStatus {
   authMode?: 'oauth2' | 'service_account' | 'none';
   clientEmail?: string;
   projectId?: string;
+  rootFolderId?: string;
   dataFolderId?: string;
+  osaFolderId?: string;
   exportFolderId?: string;
+  yearFolderIds?: Record<string, string>;
   hasCachedData: boolean;
   totalCachedSongs: number;
   lastSyncedAt?: number;
@@ -141,9 +146,13 @@ export interface ServerDriveStatus {
 }
 
 export interface DriveSettings {
+  rootFolderName?: string;
+  rootFolderId?: string;
   dataFolderName: string;
   dataFolderId?: string;
-  exportFolderName: string;
+  osaFolderName?: string;
+  osaFolderId?: string;
+  exportFolderName?: string;
   exportFolderId?: string;
   mssFileName?: string;
   xlsxFileName?: string;
